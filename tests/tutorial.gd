@@ -27,11 +27,18 @@ func _init() -> void:
 			tut = c
 	print("lezione ", n, " passi ", tut.steps.size())
 	var shot_done := false
+	var last_step := -1
 	for w in 400:
 		await create_timer(0.3).timeout
 		if not is_instance_valid(tut):
 			print("tutorial finito")
 			break
+		if OS.get_environment("TUTSHOT") != "" and tut.step != last_step:
+			last_step = tut.step
+			await create_timer(0.8).timeout
+			root.get_viewport().get_texture().get_image().save_png("%s/t%d_%02d.png" % [OS.get_environment("TUTSHOT"), n, tut.step])
+			if not is_instance_valid(tut):
+				break
 		var s: Dictionary = tut.steps[tut.step]
 		var wt := str(s.get("wait", ""))
 		_log()
@@ -40,7 +47,7 @@ func _init() -> void:
 			await create_timer(0.6).timeout
 			root.get_viewport().get_texture().get_image().save_png(a[1])
 		var r: String = g.req.get("type", "")
-		if wt == "":
+		if wt == "" or (not s.get("auto", false) and tut._cond(wt)):
 			tut._next()
 			continue
 		if r == "plot":
