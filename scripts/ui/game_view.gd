@@ -31,6 +31,7 @@ var curtain: Control
 var toast: Label
 var log_overlay: Control
 var btn_view: Button
+var cast_opt: OptionButton
 var btn_style: Button
 var btn_tac: Button
 var result_box: Control
@@ -169,6 +170,17 @@ func _build_ui() -> void:
 		var k: String = spec[1]
 		bb.pressed.connect(_cam_button.bind(k))
 		cb.add_child(bb)
+	# come si disegnano le proiezioni sul Tactical Display
+	cast_opt = OptionButton.new()
+	cast_opt.custom_minimum_size = Vector2(0, 38)
+	cast_opt.tooltip_text = "Come disegnare i volumi delle proiezioni sul Tactical Display"
+	var cst := [["ragnatela", "Proiezioni: ragnatela"], ["sfere", "Proiezioni: sfere"], ["piatti", "Proiezioni: esagoni piatti"], ["prismi", "Proiezioni: esagoni pieni"]]
+	for c in cst:
+		cast_opt.add_item(c[1])
+	cast_opt.select(maxi(0, cst.map(func(x): return x[0]).find(board.cast_style)))
+	cast_opt.item_selected.connect(func(i): board.set_cast_style(cst[i][0]))
+	cast_opt.visible = false
+	cb.add_child(cast_opt)
 	var tip_t := "Trascina: ruota  |  rotella: zoom  |  tasto destro o Maiusc: sposta  |  frecce, Q, E"
 	if DisplayServer.is_touchscreen_available():
 		tip_t = "Un dito: ruota  |  due dita: zoom e sposta"
@@ -1722,6 +1734,8 @@ func _replay_show(i: int, lab: Label) -> void:
 
 ## il pannello delle azioni è alto quanto il suo contenuto (senza coprire inutilmente la mappa)
 func _process(_dt: float) -> void:
+	if cast_opt != null:
+		cast_opt.visible = board.tactical
 	if act_panel == null or not act_panel.visible:
 		return
 	var want := act_box.get_combined_minimum_size().y + 28.0

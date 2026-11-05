@@ -1438,7 +1438,7 @@ func _tac_node(u: Dictionary, known: bool, mode: String, dis: bool, neut: bool, 
 	var body := Node3D.new()
 	body.name = "corpo"
 	n.add_child(body)
-	if style == "originale" or not known:
+	if style == "originale":
 		var sp := Sprite3D.new()
 		sp.texture = UI.counter_tex(eng.sides[u["side"]]["set"], u["label"], u["kind"] == "gate")
 		if sp.texture == null:
@@ -1458,10 +1458,12 @@ func _tac_node(u: Dictionary, known: bool, mode: String, dis: bool, neut: bool, 
 			model = Ships.fleet(u["race"], col, 1, mode == "battle")
 			model.scale = Vector3.ONE * 2.4
 		body.add_child(model)
-		if dis or neut:
+		if dis or neut or not known:
 			Ships.dim(model)
 	var tag := Label3D.new()
 	var extra := []
+	if not known:
+		extra.append("quota ?")
 	if u["kind"] == "sf" and mode == "battle":
 		extra.append("batt.")
 	if dis and u["kind"] == "sf":
@@ -1498,35 +1500,133 @@ func _tac_node(u: Dictionary, known: bool, mode: String, dis: bool, neut: bool, 
 
 
 ## anteprima di uno o più volumi di proiezione: [{from: Vector3i, cl, zs, p, col}]
+## come disegnare i volumi delle proiezioni: "prismi" (esagoni pieni 3D tenui), "piatti" (esagoni
+## piatti al loro livello), "ragnatela" (linee fra i centri delle celle vicine), "sfere" (una pallina
+## al centro di ogni cella); più chiaro dove il colpo arriva più forte
+static var cast_style := "ragnatela"
+var _last_casts: Array = []
+
+func set_cast_style(st: String) -> void:
+	cast_style = st
+	show_casts(_last_casts)
+
+
 func show_casts(casts: Array) -> void:
+	_last_casts = casts
 	for c in tac_over.get_children():
-		c.queue_free()
+		if c.name != "cursore":
+			c.queue_free()
 	for c in casts:
 		var vol: Dictionary = Hex.cast_volume(c["from"], int(c["cl"]), int(c["zs"]))
 		var col: Color = c.get("col", UI.YELLOW)
 		var pts := int(c.get("p", 32))
+		var eff := {}
 		for p in vol:
-			var eff := pts >> int(vol[p])
-			if eff <= 0:
+			var e := pts >> int(vol[p])
+			if e > 0:
+				eff[p] = float(e) / float(pts)
+		match cast_style:
+			"ragnatela":
+				_cast_web(eff, col)
+			"sfere":
+				_cast_spheres(eff, col)
+			_:
+				_cast_hexes(eff, col, cast_style == "prismi")
+
+
+func _cast_mat(col: Color, a: float) -> StandardMaterial3D:
+	var m := StandardMaterial3D.new()
+	m.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	m.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	m.albedo_color = Color(col, a)
+	m.blend_mode = BaseMaterial3D.BLEND_MODE_ADD
+	m.cull_mode = BaseMaterial3D.CULL_DISABLED
+	return m
+
+
+func _cast_hexes(eff: Dictionary, col: Color, full: bool) -> void:
+	for p in eff:
+		var f: float = eff[p]
+		var mi := MeshInstance3D.new()
+		var cy := CylinderMesh.new()
+		cy.top_radius = (0.5 if full else 0.42) * TAC_SCALE
+		cy.bottom_radius = cy.top_radius
+		cy.height = 0.92 * TAC_SCALE if full else 0.06
+		cy.radial_segments = 6
+		cy.rings = 1
+		mi.mesh = cy
+		mi.material_override = _cast_mat(col, (0.012 + 0.05 * f) if full else clampf(0.08 + 0.3 * f, 0.08, 0.38))
+		mi.position = tac_world(p)
+		mi.rotation.y = deg_to_rad(30)
+		tac_over.add_child(mi)
+
+
+## ragnatela: un segmento fra ogni coppia di celle vicine del volume (sei direzioni sul piano e la
+## verticale), con un nodo luminoso in ogni cella
+func _cast_web(eff: Dictionary, col: Color) -> void:
+	var im := ImmediateMesh.new()
+	var mi := MeshInstance3D.new()
+	mi.mesh = im
+	var m := StandardMaterial3D.new()
+	m.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	m.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	m.vertex_color_use_as_albedo = true
+	m.blend_mode = BaseMaterial3D.BLEND_MODE_ADD
+	im.surface_begin(Mesh.PRIMITIVE_LINES, m)
+	var n := 0
+	for p in eff:
+		var nb := []
+		for d in [Hex.DIRS[0], Hex.DIRS[1], Hex.DIRS[5]]:
+			nb.append(Vector3i(p.x + d.x, p.y + d.y, p.z))
+		nb.append(Vector3i(p.x, p.y, p.z + 1))
+		for q in nb:
+			if not eff.has(q):
 				continue
-			var mi := MeshInstance3D.new()
-			var cy := CylinderMesh.new()
-			cy.top_radius = 0.42 * TAC_SCALE
-			cy.bottom_radius = 0.42 * TAC_SCALE
-			cy.height = 0.06
-			cy.radial_segments = 6
-			cy.rings = 1
-			mi.mesh = cy
-			var m := StandardMaterial3D.new()
-			m.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-			m.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-			m.albedo_color = Color(col, clampf(0.08 + 0.3 * float(eff) / float(pts), 0.08, 0.38))
-			m.blend_mode = BaseMaterial3D.BLEND_MODE_ADD
-			m.no_depth_test = false
-			mi.material_override = m
-			mi.position = tac_world(p)
-			mi.rotation.y = deg_to_rad(30)
-			tac_over.add_child(mi)
+			var a := clampf(0.15 + 0.75 * (float(eff[p]) + float(eff[q])) * 0.5, 0.15, 0.9)
+			im.surface_set_color(Color(col, a))
+			im.surface_add_vertex(tac_world(p))
+			im.surface_set_color(Color(col, a))
+			im.surface_add_vertex(tac_world(q))
+			n += 1
+	if n == 0:
+		# volume di una sola cella: un segmentino verticale perché si veda qualcosa
+		for p in eff:
+			im.surface_set_color(Color(col, 0.8))
+			im.surface_add_vertex(tac_world(p) - Vector3(0, 0.3, 0))
+			im.surface_set_color(Color(col, 0.8))
+			im.surface_add_vertex(tac_world(p) + Vector3(0, 0.3, 0))
+	im.surface_end()
+	tac_over.add_child(mi)
+	_cast_spheres(eff, col, 0.45)
+
+
+func _cast_spheres(eff: Dictionary, col: Color, k := 1.0) -> void:
+	var mm := MultiMesh.new()
+	mm.transform_format = MultiMesh.TRANSFORM_3D
+	mm.use_colors = true
+	var sm := SphereMesh.new()
+	sm.radius = 0.5
+	sm.height = 1.0
+	sm.radial_segments = 10
+	sm.rings = 5
+	mm.mesh = sm
+	mm.instance_count = eff.size()
+	var i := 0
+	for p in eff:
+		var f: float = eff[p]
+		var r := (0.12 + 0.28 * f) * k
+		mm.set_instance_transform(i, Transform3D(Basis().scaled(Vector3.ONE * r * 2.0), tac_world(p)))
+		mm.set_instance_color(i, Color(col, 0.35 + 0.6 * f))
+		i += 1
+	var mi := MultiMeshInstance3D.new()
+	mi.multimesh = mm
+	var m := StandardMaterial3D.new()
+	m.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	m.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	m.vertex_color_use_as_albedo = true
+	m.blend_mode = BaseMaterial3D.BLEND_MODE_ADD
+	mi.material_override = m
+	tac_over.add_child(mi)
 
 
 func set_tac_cursor(p) -> void:
