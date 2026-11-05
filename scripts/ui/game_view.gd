@@ -307,7 +307,7 @@ func _refresh() -> void:
 	if eng == null:
 		return
 	top_turn.text = "Turno %d" % eng.turn if eng.turn > 0 else ("Preliminari" if eng.turn < 0 else "Preparazione")
-	var ph := {"plot": "piano degli spostamenti", "shift": "spostamenti", "combat": "combattimento", "end": "fine turno", "setup": "preparazione", "over": "partita finita"}
+	var ph := {"eco": "anno economico", "plot": "piano degli spostamenti", "shift": "spostamenti", "combat": "combattimento", "end": "fine turno", "setup": "preparazione", "over": "partita finita"}
 	top_phase.text = ph.get(eng.phase, eng.phase)
 	if eng.tac != null:
 		top_phase.text = "Tactical Display, Tac-turno %d" % eng.tac.tt
@@ -347,6 +347,12 @@ func _info() -> void:
 		info_box.add_child(row)
 	if eng.scn_id == 38 and not eng.rescue.is_empty():
 		info_box.add_child(UI.label("Popolazione sul pianeta: %d\nSalvati: %d  |  StarForce perse: %d" % [eng.rescue["pop"], eng.rescue["saved"], eng.rescue["lost_sf"]], 16, UI.YELLOW_L))
+	if eng.eco != null:
+		info_box.add_child(UI.hsep())
+		info_box.add_child(UI.label("Anno %d di %d%s" % [eng.eco.year, eng.eco.years, ("  |  guerre: " + ", ".join(eng.eco.wars.keys().map(func(k): return " - ".join(k.split("|").map(func(x): return eng.sides[int(x)]["nome"]))))) if not eng.eco.wars.is_empty() else "  |  pace"], 15, UI.YELLOW_L))
+		for s2 in eng.sides.size():
+			var x: Dictionary = eng.eco.sd[s2]
+			info_box.add_child(UI.label("%s: pop. %d, MLC %d, colonie %d, ricchezza %.0f" % [eng.sides[s2]["nome"], eng.eco.pop_total(s2), int(x["mlc"]), eng.eco.colonies(s2).size(), eng.eco.wealth(s2)], 14, UI.TEXT))
 	var sel_id := sel if sel != "" else tsel
 	if sel_id != "" and eng.units.has(sel_id):
 		var u: Dictionary = eng.units[sel_id]
@@ -357,6 +363,8 @@ func _info() -> void:
 			txt += "\nneutralizzata in questo turno"
 		if int(u.get("load", 0)) > 0:
 			txt += "\na bordo: profughi"
+		if eng.eco != null and u["side"] == viewer and str(u.get("carico", {}).get("k", "")) != "":
+			txt += "\na bordo: " + eng.eco.cargo_text(u)
 		info_box.add_child(UI.label(txt, 16, UI.PINK_L))
 
 
@@ -461,6 +469,14 @@ func _begin_request() -> void:
 			_ask_xsign()
 		"reserve":
 			_reserve_panel()
+		"eco_diplo":
+			_eco_diplo_panel()
+		"eco_income":
+			_eco_income_panel()
+		"eco_spend":
+			_eco_spend_panel()
+		"eco_org":
+			_eco_org_panel()
 		_:
 			_provide(null)
 
@@ -503,7 +519,7 @@ func _curtain_for(s: int) -> void:
 	vb.add_theme_constant_override("separation", 24)
 	curtain.add_child(vb)
 	vb.add_child(UI.title("Tocca a %s" % eng.pname(s), 54, UI.side_color(eng.sides[s]["set"])))
-	var what := {"plot": "piano segreto degli spostamenti", "alloc": "ripartizione segreta di attacco e difesa", "tdeploy": "schieramento sul Tactical Display", "tplot": "piano segreto del Tac-turno", "xsign": "scelta del lato del Volume"}
+	var what := {"eco_diplo": "diplomazia", "eco_income": "entrate dell'anno", "eco_spend": "spese segrete", "eco_org": "organizzazione segreta delle flotte", "reserve": "destinazione delle riserve", "plot": "piano segreto degli spostamenti", "alloc": "ripartizione segreta di attacco e difesa", "tdeploy": "schieramento sul Tactical Display", "tplot": "piano segreto del Tac-turno", "xsign": "scelta del lato del Volume"}
 	vb.add_child(UI.label("Passa il dispositivo: %s.\nGli altri non guardino lo schermo." % what.get(req["type"], "decisione"), 24, UI.TEXT))
 	var b := UI.primary(UI.button("Sono pronto", 360, 64, 26))
 	b.pressed.connect(func():
@@ -615,6 +631,15 @@ func _plot_panel() -> void:
 				plot[sel] = {"c": "Rs", "to": u["lz"]}
 				_plot_changed())
 			r3.add_child(br)
+		if eng.eco != null and str(u.get("carico", {}).get("k", "")) != "":
+			var what: String = eng.eco.db_ok(u, u["lz"])
+			if what != "":
+				var bdb := UI.button("Sbarca qui (%d/%d)" % [int(u.get("db_n", 0)), eng.eco.db_need(u)], 0, 40, 15)
+				bdb.tooltip_text = "La StarForce resta ferma e sbarca il carico: servono %d turni interi nella LiteZulu, senza nemici." % eng.eco.db_need(u)
+				bdb.pressed.connect(func():
+					plot[sel] = {"c": "DB", "to": u["lz"]}
+					_plot_changed())
+				r3.add_child(bdb)
 		if eng.scn_id == 38:
 			var bload := UI.button("Carica / scarica", 160, 42, 16)
 			bload.pressed.connect(func():
@@ -643,6 +668,8 @@ func scn_id_allows_join() -> bool:
 func _plot_line_text(u: Dictionary) -> String:
 	var id: String = u["id"]
 	var t := "%s%s  %s" % [u["label"], " (Faker)" if u.get("ff", false) else "", Hex.fmt(u["lz"])]
+	if eng.eco != null and str(u.get("carico", {}).get("k", "")) != "":
+		t += "  [%s]" % eng.eco.cargo_text(u)
 	if eng.fatigue(u) >= 2:
 		t += "  affaticata"
 	if eng.neutralized(u):
@@ -658,6 +685,8 @@ func _plot_line_text(u: Dictionary) -> String:
 		return t + "  riunisce le FakerForce"
 	if o.get("c", "") == "Rs":
 		return t + "  in riserva"
+	if o.get("c", "") == "DB":
+		return t + "  sbarca"
 	if o.get("c", "") == "E":
 		return t + "  rinforza"
 	if o.get("c", "") == "L":
@@ -672,7 +701,7 @@ func _plot_detail(id: String) -> String:
 	var u: Dictionary = eng.units[id]
 	if eng.neutralized(u):
 		return "Neutralizzata: in questo turno non può spostarsi."
-	if not plot.has(id) or plot[id].get("c", "") in ["E", "L", "F", "J", "Rs"]:
+	if not plot.has(id) or plot[id].get("c", "") in ["E", "L", "F", "J", "Rs", "DB"]:
 		return "Clicca la destinazione sulla mappa."
 	var r: Dictionary = eng.resolve_plot(seat, plot).get(id, {})
 	var codes := {"S": "spostamento normale (portata 5)", "ES": "verso una LiteZulu rinforzata (portata 10)", "GS": "con l'aiuto della StarGate di partenza (portata 10)", "EGS": "StarGate di partenza e rinforzo all'arrivo (portata 15)", "GGS": "da StarGate a StarGate (portata 20)", "GL": "GateLink: catena di StarGate amiche, sicuro"}
@@ -974,6 +1003,7 @@ func _crt_table() -> Control:
 func _start_deploy() -> void:
 	board.show_tactical(true)
 	btn_tac.visible = true
+	btn_tac.text = "Display stellare"
 	dep = eng.ais[seat].tdeploy(eng, seat, req)
 	tsel = req["ids"][0]
 	tz = dep[tsel][0].z
@@ -1062,6 +1092,7 @@ func _on_pick_tac(a: Vector2i) -> void:
 func _start_tplot() -> void:
 	board.show_tactical(true)
 	btn_tac.visible = true
+	btn_tac.text = "Display stellare"
 	tplan = {}
 	for u in eng.tac.units():
 		if u["side"] == seat:
@@ -1297,6 +1328,190 @@ func _tac_preview() -> void:
 			if str(p["a1"].get("k", "")) != "T" and str(p["a2"].get("k", "")) != "T":
 				board.set_tac_cursor(null)
 	board.show_casts(casts)
+
+
+# ---------------------------------------------------------------- Outleap: pannelli dell'anno economico
+
+var eco_sel = null
+
+func _eco_diplo_panel() -> void:
+	var picks := []
+	_panel("Anno %d: diplomazia" % eng.eco.year)
+	_note("Puoi dichiarare guerra a chi ha un sistema entro 20 Lite dai tuoi. La guerra dura tutto l'anno: solo in guerra si combatte, si proietta e si sbarcano divisioni nei sistemi altrui. Con una guerra in corso l'anno ha cinque turni stellari invece di tre.", UI.MUTED, 15)
+	for o in req.get("targets", []):
+		var cb := CheckBox.new()
+		cb.text = "Dichiara guerra a %s (%d StarForce, %d divisioni)" % [eng.sides[int(o)]["nome"], int(eng.eco.sd[int(o)]["inv"]["sf"]), int(eng.eco.sd[int(o)]["inv"]["ss"])]
+		cb.add_theme_font_size_override("font_size", 16)
+		var oo := int(o)
+		cb.toggled.connect(func(v):
+			if v:
+				picks.append(oo)
+			else:
+				picks.erase(oo))
+		act_box.add_child(cb)
+	var bok := UI.primary(UI.button("Conferma", 250, 52, 20))
+	bok.pressed.connect(func(): _provide(picks.duplicate()))
+	act_box.add_child(bok)
+
+
+func _eco_income_panel() -> void:
+	var e = eng.eco
+	var grow := []
+	_panel("Anno %d: entrate" % e.year)
+	_note("Il sistema natale rende sempre tutto. Ogni colonia può crescere di un punto di popolazione, ma quest'anno rende solo metà del suo MLC. La popolazione nuova serve a costruire StarForce e StarGate.", UI.MUTED, 15)
+	_note(e.summary(seat), UI.YELLOW_L, 16)
+	var cols: Array = req.get("colonies", [])
+	if cols.is_empty():
+		_note("Non hai ancora colonie: sbarca una colonia seme in un sistema primario o secondario libero.", UI.PINK_L, 15)
+	for h in cols:
+		var x: Dictionary = e.sys[int(h)]
+		var cb := CheckBox.new()
+		var mx := int(D.OL_MAX_POP.get(int(h), 0))
+		cb.text = "%s: popolazione %d su %d, rende %d MLC" % [x["name"], int(x["pop"]), mx, e.sys_mlc(int(h))]
+		cb.add_theme_font_size_override("font_size", 16)
+		cb.disabled = not e.can_grow(int(h))
+		var hh := int(h)
+		if e.can_grow(hh) and e.year < e.years:
+			cb.button_pressed = true
+			grow.append(hh)
+		cb.toggled.connect(func(v):
+			if v:
+				grow.append(hh)
+			else:
+				grow.erase(hh))
+		act_box.add_child(cb)
+	var bok := UI.primary(UI.button("Conferma", 250, 52, 20))
+	bok.pressed.connect(func(): _provide(grow.duplicate()))
+	act_box.add_child(bok)
+
+
+func _eco_spend_panel() -> void:
+	if eco_sel == null or not (eco_sel is Dictionary) or eco_sel.get("_t", "") != "spend":
+		eco_sel = eng.ais[seat].eco_spend(eng, seat, req)
+		eco_sel["_t"] = "spend"
+	var e = eng.eco
+	var plan: Dictionary = eco_sel
+	_panel("Anno %d: spese" % e.year if e.year > 0 else "Preparazione: spese")
+	_note("Ogni cosa già costruita costa ogni anno un mantenimento per essere attiva; quello che non mantieni resta in magazzino, non si perde. StarForce e StarGate nuove costano anche popolazione nuova, e TeleNavi più StarGate non possono superare la popolazione totale.", UI.MUTED, 15)
+	_note("Cassa %d MLC  |  popolazione nuova disponibile %d  |  popolazione %d, impegnata %d" % [int(e.sd[seat]["mlc"]), int(e.sd[seat]["pop_free"]), e.pop_total(seat), e.pop_in_items(seat)], UI.YELLOW_L, 15)
+	var inv: Dictionary = e.sd[seat]["inv"]
+	var gates_n: int = eng.live(seat, "gate").size()
+	var hr := _row()
+	var h0 := UI.label("", 14)
+	h0.custom_minimum_size.x = 190
+	hr.add_child(h0)
+	for t in ["attive", "nuove"]:
+		var hl := UI.label(t, 14, UI.MUTED)
+		hl.custom_minimum_size.x = 100
+		hr.add_child(hl)
+	for k in ["sf", "gate", "seed", "ee", "ss"]:
+		var c: Array = D.OL_COST[k]
+		var r := _row()
+		var have: int = gates_n if k == "gate" else int(inv[k])
+		var lab := UI.label("%s (%d)" % [D.OL_NOMI[k], have], 15)
+		lab.custom_minimum_size.x = 190
+		r.add_child(lab)
+		var sk := SpinBox.new()
+		sk.custom_minimum_size.x = 96
+		sk.min_value = 0
+		sk.max_value = have
+		sk.value = int(plan["keep"].get(k, 0))
+		sk.tooltip_text = "Quante mantenerne attive quest'anno (hai %d, %d MLC l'una)" % [have, int(c[2])]
+		var kk: String = k
+		sk.value_changed.connect(func(v):
+			plan["keep"][kk] = int(v)
+			_eco_spend_panel())
+		r.add_child(sk)
+		if k != "gate":
+			var sb := SpinBox.new()
+			sb.custom_minimum_size.x = 96
+			sb.min_value = 0
+			sb.max_value = 20
+			sb.value = int(plan["build"].get(k, 0))
+			sb.tooltip_text = "Costo: %d MLC%s" % [int(c[1]), (" e %d di popolazione" % int(c[0])) if int(c[0]) > 0 else ""]
+			sb.value_changed.connect(func(v):
+				plan["build"][kk] = int(v)
+				_eco_spend_panel())
+			r.add_child(sb)
+	var sites: Array = req.get("sites", [])
+	if not sites.is_empty():
+		act_box.add_child(UI.head("Nuove StarGate (30 MLC e 7 di popolazione)", 16, UI.PINK_L))
+		for h in sites:
+			var cb := CheckBox.new()
+			cb.text = e.sys[int(h)]["name"]
+			cb.add_theme_font_size_override("font_size", 16)
+			cb.button_pressed = int(h) in plan["gates"]
+			var hh := int(h)
+			cb.toggled.connect(func(v):
+				if v and not hh in plan["gates"]:
+					plan["gates"].append(hh)
+				elif not v:
+					plan["gates"].erase(hh)
+				_eco_spend_panel())
+			act_box.add_child(cb)
+	var chk: Dictionary = e.spend_check(seat, plan)
+	_note("Spesa %d MLC, popolazione %d%s" % [int(chk["mlc"]), int(chk["pop"]), ("\n" + str(chk["err"])) if not chk["ok"] else ""], UI.RED if not chk["ok"] else UI.GREEN, 16)
+	var rb := _row()
+	var bok := UI.primary(UI.button("Conferma", 200, 52, 20))
+	bok.disabled = not chk["ok"]
+	bok.pressed.connect(func():
+		var out: Dictionary = plan.duplicate(true)
+		out.erase("_t")
+		eco_sel = null
+		_provide(out))
+	rb.add_child(bok)
+	var bai := UI.button("Proposta dell'IA", 180, 52, 17)
+	bai.pressed.connect(func():
+		eco_sel = null
+		_eco_spend_panel())
+	rb.add_child(bai)
+
+
+func _eco_org_panel() -> void:
+	if eco_sel == null or not (eco_sel is Dictionary) or eco_sel.get("_t", "") != "org":
+		eco_sel = eng.ais[seat].eco_org(eng, seat, req)
+		eco_sel["_t"] = "org"
+	var e = eng.eco
+	var plan: Dictionary = eco_sel
+	_panel("Anno %d: organizzazione" % e.year)
+	_note("Carica le StarForce e scegli dove partono. Ogni StarForce porta una colonia seme, oppure un gruppo EE, oppure da una a sei divisioni. Dove non c'è una StarGate può partire una sola StarForce.", UI.MUTED, 15)
+	_note("Disponibili: %d colonie seme, %d gruppi EE, %d divisioni" % [int(req.get("seed", 0)), int(req.get("ee", 0)), int(req.get("ss", 0))], UI.YELLOW_L, 15)
+	var sites: Array = req.get("sites", [])
+	var kinds := [["", "niente"], ["seed", "colonia seme"], ["ee", "gruppo EE"], ["ss", "divisioni"]]
+	for i in int(req.get("n", 0)):
+		var c: Dictionary = plan["carico"][i]
+		var r := _row()
+		r.add_child(UI.label("StarForce %d" % (i + 1), 16))
+		var ob := OptionButton.new()
+		for kd in kinds:
+			ob.add_item(kd[1])
+		ob.select(maxi(0, kinds.map(func(x): return x[0]).find(str(c.get("k", "")))))
+		var ii := i
+		ob.item_selected.connect(func(j):
+			plan["carico"][ii] = {"k": kinds[j][0], "n": 1 if kinds[j][0] != "ss" else mini(6, maxi(1, int(req.get("ss", 0))))}
+			_eco_org_panel())
+		r.add_child(ob)
+		if str(c.get("k", "")) == "ss":
+			var sn := SpinBox.new()
+			sn.min_value = 1
+			sn.max_value = 6
+			sn.value = int(c.get("n", 1))
+			sn.value_changed.connect(func(v): plan["carico"][ii]["n"] = int(v))
+			r.add_child(sn)
+		var os := OptionButton.new()
+		for h in sites:
+			os.add_item(e.sys[int(h)]["name"])
+		os.select(maxi(0, sites.find(int(plan["at"][i]))))
+		os.item_selected.connect(func(j): plan["at"][ii] = sites[j])
+		r.add_child(os)
+	var rb := _row()
+	var bok := UI.primary(UI.button("Conferma", 200, 52, 20))
+	bok.pressed.connect(func():
+		var out: Dictionary = plan.duplicate(true)
+		out.erase("_t")
+		eco_sel = null
+		_provide(out))
+	rb.add_child(bok)
 
 
 # ---------------------------------------------------------------- riserve (32.0)

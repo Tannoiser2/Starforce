@@ -140,6 +140,23 @@ const FF_TELE_STELLAR := 8
 const FF_TELE_BATTLE := 16
 const FF_BREAKOFF_COST := 4
 
+## ---------------------------------------------------------------- Outleap (scenario 100, Moves)
+## sistema natale: popolazione e MLC per razza
+const OL_HOME := {"umani": [19, 54], "lcd": [17, 57], "rame": [20, 52], "altri": [18, 55]}
+## popolazione massima dei sistemi abitabili (primari e secondari)
+const OL_MAX_POP := {1821: 17, 2420: 10, 732: 9, 2626: 17, 2427: 12, 3009: 11, 2713: 15, 2523: 16, 3018: 13,
+	2833: 14, 3223: 12, 1636: 12, 2036: 14, 3116: 12, 2326: 12, 2020: 18, 3015: 16}
+## MLC di una colonia secondo la popolazione (1-18)
+const OL_COL_MLC := [0, 10, 14, 18, 21, 23, 26, 27, 30, 31, 32, 35, 36, 38, 39, 40, 42, 43, 44]
+## sistemi terziari: esplorazione (chit 0-9) e reddito annuo per tipo
+const OL_EXPLORE := ["VRM", "RM", "RM", "SV", "SV", "", "", "", "", "X"]
+const OL_INCOME := {"VRM": [9, 8, 10, 13, 7, 12, 6, 5, 3, 1], "RM": [9, 8, 7, 7, 7, 6, 6, 4, 3, 1], "SV": [5, 5, 7, 7, 7, 6, 6, 4, 3, 4]}
+const OL_AVG := {"VRM": 7.4, "RM": 5.8, "SV": 5.4}
+const OL_TIPI := {"VRM": "minerali rarissimi", "RM": "minerali rari", "SV": "vegetali speciali", "": "nulla di valore", "X": "nulla, e il gruppo è andato perduto"}
+## costi: [popolazione, MLC per costruire, MLC di mantenimento]
+const OL_COST := {"sf": [4, 32, 8], "gate": [7, 30, 10], "seed": [0, 15, 1], "ee": [0, 6, 0], "ss": [0, 2, 1]}
+const OL_NOMI := {"sf": "StarForce", "gate": "StarGate", "seed": "Colonie seme", "ee": "Gruppi EE", "ss": "Divisioni StarSoldier"}
+
 ## Regole opzionali (32.0-36.0): chiave -> [nome, descrizione]
 const OPTIONS := {
 	"riserve": ["StarForce di riserva", "Fino a un terzo delle StarForce può restare in riserva e intervenire in una LiteZulu contesa dal secondo segmento (o dal terzo Tac-turno)."],
@@ -457,6 +474,33 @@ const SCENARIOS := [
 		"vc": "cartagine", "formato": "avanzato", "formati": ["avanzato"],
 		"vittoria": ["Vinci se la stella esplode in nova prima che il trasporto xenofobo esca dal Tactical Display.", "Per la nova: StarGate disgregata o neutralizzata, poi una tua StarForce in modo stellare passa un intero Tac-turno nel MiniLite della stella (000/-1) a piantare l'innesco; la stella esplode nel Tac-turno seguente."],
 		"note": "Solitario sul Tactical Display. La tabella delle risposte xenofobe dell'articolo originale non è nel materiale disponibile: il trasporto parte vicino al centro e dal secondo Tac-turno, ogni volta, ha due probabilità su dieci di ritirarsi dal display; la StarGate spara sulle tue StarForce più vicine.",
+	},
+	{
+		"id": 100, "nome": "Outleap: l'espansione (tre giocatori)", "anno": "2400-2500 d.C.",
+		"orig": "The Outleap (Moves, Arnold Hendrick)",
+		"intro": "La storia dell'Outleap vista dall'alto: colonie, miniere, eserciti e guerre fra Umani, L'Chal-Dah e Rame. Si gioca per anni economici: entrate, spese, organizzazione delle flotte, alcuni turni stellari e il bilancio di fine anno.",
+		"lati": [
+			{"nome": "Umani", "razza": "umani", "set": "blu", "casa": ["2020"], "ol_casa": 2020},
+			{"nome": "L'Chal-Dah", "razza": "lcd", "set": "ocra", "casa": ["2326"], "ol_casa": 2326},
+			{"nome": "Rame", "razza": "rame", "set": "verde", "casa": ["2036"], "ol_casa": 2036},
+		],
+		"outleap": true, "anni": 5, "opzioni": ["faker"],
+		"vc": "outleap", "formato": "avanzato",
+		"vittoria": ["Dopo l'ultimo anno vince chi ha la ricchezza maggiore: (2H + T) x P / 10S + C, con H il reddito dei sistemi abitati, T la media dei terziari sfruttati, P la popolazione, S i sistemi controllati e C l'MLC in cassa."],
+		"note": "Versione digitale semplificata: le guerre si dichiarano all'inizio di ogni anno e finiscono con l'anno; la tabella delle tregue non c'è. Ogni anno ha tre turni stellari, cinque se c'è una guerra.",
+	},
+	{
+		"id": 101, "nome": "Outleap: l'espansione (due giocatori)", "anno": "2400-2500 d.C.",
+		"orig": "The Outleap (Moves, Arnold Hendrick)",
+		"intro": "La campagna economica dell'Outleap per due giocatori: Umani contro L'Chal-Dah.",
+		"lati": [
+			{"nome": "Umani", "razza": "umani", "set": "blu", "casa": ["2020"], "ol_casa": 2020},
+			{"nome": "L'Chal-Dah", "razza": "lcd", "set": "ocra", "casa": ["2326"], "ol_casa": 2326},
+		],
+		"outleap": true, "anni": 5, "opzioni": ["faker"],
+		"vc": "outleap", "formato": "avanzato",
+		"vittoria": ["Dopo l'ultimo anno vince chi ha la ricchezza maggiore: (2H + T) x P / 10S + C."],
+		"note": "Versione digitale semplificata: le guerre si dichiarano all'inizio di ogni anno e finiscono con l'anno. Ogni anno ha tre turni stellari, cinque se c'è una guerra.",
 	},
 	{
 		"id": 38, "nome": "La missione di soccorso", "anno": "2776 d.C.",

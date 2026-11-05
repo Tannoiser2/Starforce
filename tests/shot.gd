@@ -16,7 +16,7 @@ func _init() -> void:
 	root.add_child(main)
 	await process_frame
 	if not menu:
-		var n: int = 3 if scn in [11, 12] else (1 if scn == 38 else 2)
+		var n: int = SFEngine.D.scenario(scn)["lati"].size()
 		var seats := []
 		for i in n:
 			seats.append({"name": "", "ai": not (human and i == 0), "level": 1})

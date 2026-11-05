@@ -23,6 +23,7 @@ extends Node
 
 const D = preload("res://scripts/data/sf_data.gd")
 const Tac = preload("res://scripts/core/tactical.gd")
+const Outleap = preload("res://scripts/core/outleap.gd")
 
 signal changed
 signal log_added(text: String)
@@ -90,6 +91,7 @@ var inactive := {}                # lati inattivi (scenario 19: Lega; scenario 2
 var politics := {}                # scenario 21: punti politici, sacchetto, salto della pesca
 var outer_sign := 1               # lato del Volume dei sistemi esterni (scenari 17-19)
 var s16_hold := {}                # scenario 16: turni consecutivi con otto sistemi terziari
+var eco = null                    # Outleap (scenario 100): la parte economica
 var prolonged := {}               # LiteZulu con un combattimento che prosegue (35.0)
 var reserves := {}                # uid -> LiteZulu contesa a cui la riserva è destinata (32.0)
 
@@ -400,12 +402,14 @@ func neutralized(u: Dictionary) -> bool:
 
 
 func gate_active(u: Dictionary) -> bool:
-	return u["kind"] == "gate" and u["st"] == "on" and not neutralized(u) and not inactive.has(u["side"])
+	return u["kind"] == "gate" and u["st"] == "on" and not neutralized(u) and not inactive.has(u["side"]) and not u.get("unmaint", false)
 
 
 func hostile(a: int, b: int) -> bool:
 	if a == b or a < 0 or b < 0:
 		return false
+	if eco != null:
+		return eco.at_war(a, b)
 	if inactive.has(a) or inactive.has(b):
 		return false
 	for p in sc.get("pace", []):
@@ -579,6 +583,11 @@ func run() -> void:
 		await _carthage()
 		_finish()
 		return
+	if sc.get("outleap", false):
+		await _outleap_run()
+		if not abort:
+			_finish()
+		return
 	_rec({"k": "start"})
 	turn = 0
 	# spostamenti liberi prima del primo turno (scenari 2, 3, 9) e combattimento iniziale (scenario 5)
@@ -713,7 +722,7 @@ func resolve_plot(side: int, plot: Dictionary) -> Dictionary:
 			continue
 		var o: Dictionary = plot[id]
 		var c := str(o.get("c", ""))
-		if c in ["E", "F", "J", "Rs"]:
+		if c in ["E", "F", "J", "Rs", "DB"]:
 			if c == "E" and not neutralized(u):
 				if not enh_free.has(u["lz"]):
 					enh_free[u["lz"]] = []
@@ -1027,6 +1036,9 @@ func _execute_shifts(plots: Dictionary) -> void:
 				continue
 			if r["c"] == "Rs":
 				res_new.append(u)
+				continue
+			if r["c"] == "DB":
+				u["db"] = true
 				continue
 			if str(plots[s][id].get("c", "")) == "L":
 				continue
@@ -1951,6 +1963,113 @@ func _stalemate_breakoff(l: Vector3i) -> void:
 
 
 # ---------------------------------------------------------------- fine turno
+
+# ---------------------------------------------------------------- Outleap (scenario 100)
+
+func sides_reset_letters() -> void:
+	for sdd in sides:
+		sdd["next_letter"] = 0
+
+
+func _outleap_run() -> void:
+	eco = Outleap.new()
+	eco.eng = self
+	eco.setup()
+	_rec({"k": "start"})
+	var all := range(sides.size())
+	# anno zero: MLC raddoppiato e prime costruzioni (112)
+	log_msg("— Preparazione: i sistemi natali investono il doppio del loro reddito —")
+	phase = "eco"
+	for s in all:
+		eco.apply_income(s, [], true)
+	await _eco_spend(all)
+	for y in range(1, eco.years + 1):
+		if abort:
+			return
+		eco.year = y
+		log_msg("— Anno economico %d di %d —" % [y, eco.years])
+		phase = "eco"
+		# 1. diplomazia: dichiarazioni di guerra
+		var seats := []
+		var reqs := []
+		for s in all:
+			var tg: Array = eco.war_targets(s)
+			if tg.is_empty():
+				continue
+			seats.append(s)
+			reqs.append({"type": "eco_diplo", "targets": tg})
+		var decls := {}
+		if not seats.is_empty():
+			var rr: Array = await decide_all(seats, reqs)
+			for i in seats.size():
+				decls[seats[i]] = rr[i] if rr[i] is Array else []
+		eco.apply_diplomacy(decls)
+		# 2. entrate
+		seats = []
+		reqs = []
+		for s in all:
+			seats.append(s)
+			reqs.append({"type": "eco_income", "colonies": eco.colonies(s)})
+		var rr2: Array = await decide_all(seats, reqs)
+		for i in seats.size():
+			eco.apply_income(seats[i], rr2[i] if rr2[i] is Array else [])
+		changed.emit()
+		# 3. spese
+		await _eco_spend(all)
+		# 4. organizzazione
+		seats = []
+		reqs = []
+		for s in all:
+			if int(eco.sd[s]["act"]["sf"]) <= 0:
+				continue
+			seats.append(s)
+			reqs.append({"type": "eco_org", "n": int(eco.sd[s]["act"]["sf"]), "seed": int(eco.sd[s]["act"]["seed"]), "ee": int(eco.sd[s]["act"]["ee"]), "ss": int(eco.sd[s]["act"]["ss"]), "sites": eco.deploy_sites(s)})
+		if not seats.is_empty():
+			var rr3: Array = await decide_all(seats, reqs)
+			for i in seats.size():
+				eco.apply_org(seats[i], rr3[i] if rr3[i] is Dictionary else {})
+		_rec({"k": "deploy"})
+		# 5. turni stellari: tre, cinque se c'è una guerra
+		var n := 3 if eco.wars.is_empty() else 5
+		for k in n:
+			if abort:
+				return
+			turn += 1
+			log_msg("— Turno %d (anno %d, %d di %d) —" % [turn, y, k + 1, n])
+			_turn_start()
+			await _stellar_turn(all)
+			eco.after_turn()
+		# 6. consolidamento
+		phase = "eco"
+		eco.consolidate()
+		log_msg("Fine dell'anno %d: %s." % [y, ", ".join(all.map(func(s): return "%s ricchezza %.0f" % [sides[s]["nome"], eco.wealth(s)]))])
+		_rec({"k": "year_end"})
+	var best := -1
+	var bw := -1.0
+	var tie := false
+	for s in all:
+		var w: float = eco.wealth(s)
+		vp[s] = int(round(w))
+		if w > bw + 0.01:
+			bw = w
+			best = s
+			tie = false
+		elif absf(w - bw) <= 0.01:
+			tie = true
+	_win(-1 if tie else best, "la ricchezza più grande dopo %d anni (%s)." % [eco.years, ", ".join(all.map(func(s): return "%s %d" % [sides[s]["nome"], vp[s]]))])
+
+
+func _eco_spend(all: Array) -> void:
+	var seats := []
+	var reqs := []
+	for s in all:
+		seats.append(s)
+		reqs.append({"type": "eco_spend", "sites": eco.gate_sites(s)})
+	var rr: Array = await decide_all(seats, reqs)
+	for i in seats.size():
+		eco.apply_spend(seats[i], rr[i] if rr[i] is Dictionary else {})
+	changed.emit()
+
 
 # ---------------------------------------------------------------- scenari 15-21
 

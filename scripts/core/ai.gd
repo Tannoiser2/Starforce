@@ -38,7 +38,143 @@ func decide(eng, s: int, req: Dictionary):
 			return 1 if rng.randi_range(0, 1) == 0 else -1
 		"reserve":
 			return reserve(eng, s, req)
+		"eco_diplo":
+			return eco_diplo(eng, s, req)
+		"eco_income":
+			return eco_income(eng, s, req)
+		"eco_spend":
+			return eco_spend(eng, s, req)
+		"eco_org":
+			return eco_org(eng, s, req)
 	return {}
+
+
+# ================================================================ Outleap: economia
+
+func eco_diplo(eng, s: int, req: Dictionary) -> Array:
+	var e = eng.eco
+	var out := []
+	for o in req.get("targets", []):
+		var mine := int(e.sd[s]["inv"]["sf"])
+		var theirs := int(e.sd[int(o)]["inv"]["sf"])
+		if mine >= 3 and mine >= theirs * 3 / 2 + 1 and int(e.sd[s]["inv"]["ss"]) >= 2 and rng.randi_range(0, 2) > 0:
+			out.append(int(o))
+	return out
+
+
+func eco_income(eng, s: int, req: Dictionary) -> Array:
+	var e = eng.eco
+	if e.year >= e.years:
+		return []          # l'ultimo anno conta il reddito pieno
+	var out := []
+	for h in req.get("colonies", []):
+		if e.can_grow(int(h)):
+			out.append(int(h))
+	return out
+
+
+func eco_spend(eng, s: int, req: Dictionary) -> Dictionary:
+	var e = eng.eco
+	var inv: Dictionary = e.sd[s]["inv"]
+	var plan := {"keep": {"sf": inv["sf"], "seed": inv["seed"], "ee": inv["ee"], "ss": inv["ss"], "gate": eng.live(s, "gate").size()}, "build": {"sf": 0, "seed": 0, "ee": 0, "ss": 0}, "gates": []}
+	# se non basta l'MLC per mantenere tutto, si lasciano a riposo prima le divisioni, poi le flotte
+	for k in ["ss", "seed", "ee", "sf", "gate"]:
+		while not e.spend_check(s, plan)["ok"] and int(plan["keep"][k]) > 0:
+			plan["keep"][k] = int(plan["keep"][k]) - 1
+	# nuove StarGate dove si può (la casa per prima)
+	for h in req.get("sites", []):
+		plan["gates"].append(int(h))
+		if not e.spend_check(s, plan)["ok"]:
+			plan["gates"].pop_back()
+	# colonie seme e gruppi EE secondo i sistemi liberi, poi StarForce, poi divisioni
+	var free_hab := 0
+	var free_t := 0
+	for h in e.sys:
+		var x: Dictionary = e.sys[h]
+		if x["owner"] < 0 and x["cls"] != "t":
+			free_hab += 1
+		elif x["cls"] == "t" and not x["ee"].has(s):
+			free_t += 1
+	# a turno: una StarForce, una colonia seme, un gruppo EE... finché bastano MLC e popolazione;
+	# le divisioni solo se si pensa alla guerra
+	var wish := {"seed": maxi(0, mini(2, free_hab) - int(inv["seed"])), "ee": maxi(0, mini(3, free_t) - int(inv["ee"])), "sf": 8,
+		"ss": (6 - int(inv["ss"])) if int(inv["sf"]) >= 3 else 0}
+	var order := ["sf", "seed", "ee", "sf", "seed", "ee", "sf", "ss", "sf", "ss", "sf", "sf"]
+	for k in order:
+		if int(plan["build"][k]) >= int(wish[k]):
+			continue
+		plan["build"][k] = int(plan["build"][k]) + 1
+		if not e.spend_check(s, plan)["ok"]:
+			plan["build"][k] = int(plan["build"][k]) - 1
+	return plan
+
+
+func eco_org(eng, s: int, req: Dictionary) -> Dictionary:
+	var n := int(req.get("n", 0))
+	var cargo := []
+	var left := {"seed": int(req.get("seed", 0)), "ee": int(req.get("ee", 0)), "ss": int(req.get("ss", 0))}
+	for i in n:
+		var c := {"k": "", "n": 0}
+		for k in (["seed", "ee"] if i % 2 == 0 else ["ee", "seed"]):
+			if int(left[k]) > 0 and c["k"] == "":
+				c = {"k": k, "n": 1}
+				left[k] = int(left[k]) - 1
+		if c["k"] == "" and int(left["ss"]) > 0:
+			var q := mini(6, int(left["ss"]))
+			c = {"k": "ss", "n": q}
+			left["ss"] = int(left["ss"]) - q
+		cargo.append(c)
+	var at := []
+	var sites: Array = req.get("sites", [])
+	var home: int = eng.eco.sd[s]["home"]
+	for i in n:
+		at.append(home)
+	return {"carico": cargo, "at": at}
+
+
+## piano stellare dell'Outleap: chi porta un carico va a sbarcarlo, gli altri fanno la guerra (se c'è)
+## o scortano
+func _eco_plot(eng, s: int) -> Dictionary:
+	var e = eng.eco
+	var plan := {}
+	var carriers := []
+	var others := []
+	for u in eng.live(s, "sf"):
+		if eng.neutralized(u):
+			continue
+		if str(u.get("carico", {}).get("k", "")) != "":
+			carriers.append(u)
+		else:
+			others.append(u)
+	var claimed := {}
+	for u in carriers:
+		if e.db_ok(u, u["lz"]) != "":
+			plan[u["id"]] = {"c": "DB"}
+			claimed[u["lz"]] = true
+			continue
+		var best = null
+		var bd := 1e9
+		for h in e.sys:
+			var l: Vector3i = eng.star_hex_lz(int(h))
+			if claimed.has(l) or e.db_ok(u, l) == "":
+				continue
+			if str(u["carico"]["k"]) == "ss" and int(e.sys[h]["pop"]) > int(u["carico"]["n"]):
+				continue
+			var d := float(Hex.tdist(u["lz"], l)) + rng.randf()
+			if d < bd:
+				bd = d
+				best = l
+		if best == null:
+			continue
+		claimed[best] = true
+		plan[u["id"]] = {"c": "", "to": _toward(eng, s, u, best, plan, true)}
+	if e.wars.is_empty() or others.is_empty():
+		return plan
+	# guerra: le altre StarForce usano il piano solito
+	var war := plot_general(eng, s, others)
+	for id in war:
+		plan[id] = war[id]
+	return plan
 
 
 ## destinazione delle riserve (32.0): la LiteZulu contesa raggiungibile senza rischi, preferendo
@@ -75,9 +211,15 @@ func plot(eng, s: int, req: Dictionary) -> Dictionary:
 		return _rescue_plot(eng, s)
 	if eng.scn_id == 16:
 		return _faker_plot(eng, s)
+	if eng.eco != null:
+		return _eco_plot(eng, s)
+	return plot_general(eng, s, [])
+
+
+func plot_general(eng, s: int, only: Array) -> Dictionary:
 	var mine: Array = []
 	for u in eng.live(s, "sf"):
-		if not eng.neutralized(u):
+		if not eng.neutralized(u) and (only.is_empty() or u in only):
 			mine.append(u)
 	if mine.is_empty():
 		return {}

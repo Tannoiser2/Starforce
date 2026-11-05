@@ -3,10 +3,13 @@ extends SceneTree
 ## decisioni, poi si rigioca con le decisioni precaricate e si confrontano le impronte.
 
 func _init() -> void:
-	for scn in [3, 5, 13]:
-		var fmt := "modificato" if scn == 13 else "avanzato"
-		var cfg := {"scenario": scn, "mode": fmt, "seed": 99, "max_turns": 25,
-			"seats": [{"name": "", "ai": true, "level": 1}, {"name": "", "ai": true, "level": 1}]}
+	for spec in [[3, "avanzato", {}], [5, "avanzato", {"riserve": true, "faker": true, "fatica": true, "continuita": true, "gatelink": true}], [13, "modificato", {}], [16, "modificato", {}], [18, "modificato", {}], [20, "avanzato", {}], [100, "avanzato", {}], [13, "avanzato", {}]]:
+		var scn: int = spec[0]
+		var fmt: String = spec[1]
+		var seats := []
+		for i in SFEngine.D.scenario(scn)["lati"].size():
+			seats.append({"name": "", "ai": true, "level": 1})
+		var cfg := {"scenario": scn, "mode": fmt, "seed": 99, "max_turns": 25, "seats": seats, "opzioni": spec[2]}
 		var a := SFEngine.new()
 		a.headless = true
 		a.anim = 0.0

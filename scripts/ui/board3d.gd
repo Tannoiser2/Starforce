@@ -646,6 +646,17 @@ func _star_label(n: Node3D) -> void:
 		lab.text = nm
 	lab.visible = hot or show_names == 2 or (show_names == 1 and cls != "t") or (top_view and show_names >= 1)
 	lab.modulate.a = 1.0 if hot else (0.85 if cls != "t" else 0.6)
+	# Outleap: colore del proprietario e popolazione; i terziari sfruttati con "EE"
+	if eng != null and eng.eco != null and eng.eco.sys.has(Hex.hexof(l)):
+		var x: Dictionary = eng.eco.sys[Hex.hexof(l)]
+		if int(x["owner"]) >= 0:
+			var oc: Color = UI.side_color(eng.sides[int(x["owner"])]["set"]).lightened(0.35)
+			lab.modulate = Color(oc.r, oc.g, oc.b, 1.0)
+			lab.visible = true
+			if int(x["pop"]) > 0:
+				lab.text += "  [%d]" % int(x["pop"])
+			elif x["cls"] == "t":
+				lab.text += "  [EE]"
 	var stem: MeshInstance3D = n.get_node_or_null("stelo")
 	if stem != null:
 		var m: StandardMaterial3D = stem.material_override
@@ -705,6 +716,9 @@ func _side_col(s: int) -> Color:
 
 func refresh() -> void:
 	_refresh_units(null)
+	if eng != null and eng.eco != null:
+		for l in star_nodes:
+			_star_label(star_nodes[l])
 
 
 ## mostra le posizioni registrate in un momento della partita (replay): tutto visibile
@@ -832,11 +846,16 @@ func _stack_tags(stacks: Dictionary, seen: Dictionary, where: Dictionary) -> voi
 						lab = lab.to_lower()
 					letters.append(lab)
 			var l: Vector3i = where[ids[0]]
-			if has_gate and not letters.is_empty() and style != "originale":
-				# la StarGate ha la sua etichetta, più in basso; le StarForce sopra
-				_tag(root, "StarGate", Hex.world(l), _side_col(sd), 22, 66)
-				has_gate = false
-				j = 1
+			# le StarGate si riconoscono dal modello e dal nome della stella: la sigla è solo per le flotte
+			if letters.is_empty():
+				continue
+			has_gate = false
+			if letters.size() > 6:
+				var nff := 0
+				for id in ids:
+					if eng.units[id].get("ff", false) and (sd == viewer or viewer == -2 or eng.units[id].get("ff_known", false)):
+						nff += 1
+				letters = ["%d %s" % [letters.size(), "FakerForce" if nff == letters.size() else "unità"]]
 			var zs := ("+%d" % l.z) if l.z > 0 else str(l.z)
 			var txt := " ".join(letters)
 			if has_gate:
