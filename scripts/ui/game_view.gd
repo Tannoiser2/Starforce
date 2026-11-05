@@ -30,6 +30,7 @@ var hover_label: Label
 var curtain: Control
 var toast: Label
 var log_overlay: Control
+var btn_view: Button
 var btn_style: Button
 var btn_tac: Button
 var result_box: Control
@@ -92,6 +93,7 @@ func _ready() -> void:
 	board.picked_hex.connect(_on_pick_hex)
 	board.picked_tac.connect(_on_pick_tac)
 	board.hover_hex.connect(_on_hover)
+	board.hover_tac.connect(_on_hover_tac)
 	fx = FxScript.new()
 	fx.board = board
 	fx.eng = eng
@@ -103,37 +105,73 @@ func _ready() -> void:
 	eng.fx.connect(_on_fx)
 	eng.game_ended.connect(_on_end)
 	_focus_home()
+	if config.get("tutorial", false):
+		var tut = preload("res://scripts/ui/tutorial.gd").new()
+		tut.g = self
+		add_child(tut)
 	if online != null and online.role != "host":
 		online.heartbeat_loop()
 	await get_tree().process_frame
 	eng.run()
 
 
+func _cam_button(k: String) -> void:
+	if k == "q":
+		board.yaw += 0.35
+	elif k == "e":
+		board.yaw -= 0.35
+	elif k == "-":
+		board.dist = clampf(board.dist * 1.2, board.DIST_MIN, board.DIST_MAX)
+	else:
+		board.dist = clampf(board.dist / 1.2, board.DIST_MIN, board.DIST_MAX)
+
+
 func _focus_home() -> void:
+	if board.tactical:
+		board.reset_view(Vector3.ZERO, 34.0)
+		return
 	var s := viewer if viewer >= 0 else 0
 	for u in eng.live(s, "gate"):
-		board.focus(Hex.world(u["lz"]), 46.0)
+		board.reset_view(Hex.world(u["lz"]), 30.0)
 		return
 	for u in eng.live(s, "sf"):
-		board.focus(Hex.world(u["lz"]), 46.0)
+		board.reset_view(Hex.world(u["lz"]), 30.0)
 		return
 
 
 # ================================================================ costruzione interfaccia
 
 func _build_ui() -> void:
-	# suggerimento per la telecamera, in basso al centro, sopra la mappa
-	var tip_t := "Mouse: trascina per ruotare, rotella per lo zoom, tasto destro (o Maiusc + trascina) per spostare la vista"
+	# comandi della vista, in basso a sinistra sopra il registro (servono anche sul telefono)
+	var cb := HBoxContainer.new()
+	cb.add_theme_constant_override("separation", 6)
+	cb.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_LEFT)
+	cb.offset_left = 10
+	cb.offset_top = -192
+	cb.offset_bottom = -150
+	add_child(cb)
+	btn_view = UI.button("Vista dall'alto", 0, 38, 15)
+	btn_view.tooltip_text = "Passa dalla vista 3D inclinata alla vista dall'alto, come la mappa di carta"
+	btn_view.pressed.connect(func():
+		board.set_top_view(not board.top_view)
+		btn_view.text = "Vista 3D" if board.top_view else "Vista dall'alto")
+	cb.add_child(btn_view)
+	var bc := UI.button("Centra", 0, 38, 15)
+	bc.tooltip_text = "Riporta la vista sulle tue forze"
+	bc.pressed.connect(_focus_home)
+	cb.add_child(bc)
+	for spec in [["Ruota <", "q"], ["Ruota >", "e"], ["Zoom -", "-"], ["Zoom +", "+"]]:
+		var bb := UI.button(spec[0], 0, 38, 15)
+		var k: String = spec[1]
+		bb.pressed.connect(_cam_button.bind(k))
+		cb.add_child(bb)
+	var tip_t := "Trascina: ruota  |  rotella: zoom  |  tasto destro o Maiusc: sposta  |  frecce, Q, E"
 	if DisplayServer.is_touchscreen_available():
-		tip_t = "Un dito: ruota  |  due dita: pizzica per lo zoom, trascina per spostare la vista"
-	var tip := UI.label(tip_t, 13, Color(0.9, 0.85, 0.95, 0.7))
+		tip_t = "Un dito: ruota  |  due dita: zoom e sposta"
+	var tip := UI.label(tip_t, 13, Color(0.9, 0.85, 0.95, 0.6))
 	tip.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	tip.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	tip.set_anchors_and_offsets_preset(Control.PRESET_CENTER_BOTTOM)
-	tip.grow_horizontal = Control.GROW_DIRECTION_BOTH
-	tip.offset_top = -170
-	tip.offset_bottom = -150
-	add_child(tip)
+	tip.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	cb.add_child(tip)
 	# barra in alto
 	var top := PanelContainer.new()
 	top.add_theme_stylebox_override("panel", UI.box(Color(0.05, 0.02, 0.02, 0.88), UI.PINK_D, 0, 0, 8))
@@ -364,6 +402,22 @@ func _on_hover(h: int) -> void:
 		if not r.is_empty():
 			txt += "  |  verso %s: %d Lite, %s %s" % [Hex.fmt(to), int(r["d"]), r["c"], eng.col_name(int(r["col"]))]
 			board.set_cursor(to, _col_color(int(r["col"])))
+	hover_label.text = txt
+
+
+func _on_hover_tac(a: Vector2i) -> void:
+	if a == Vector2i(99, 99):
+		hover_label.text = ""
+		return
+	var txt := "Tactical Display: esagono %s" % Hex.tlabel(a)
+	if eng.tac != null:
+		var here := []
+		for u in eng.tac.units():
+			var p = eng.tac.known_pos(u, viewer)
+			if p != null and Vector2i(p.x, p.y) == a:
+				here.append("%s %s (MiniZulu %s)" % [eng.pname(u["side"]), u["label"], ("+%d" % p.z) if p.z > 0 else str(p.z)])
+		if not here.is_empty():
+			txt += "  |  " + ", ".join(here)
 	hover_label.text = txt
 
 
@@ -1370,3 +1424,13 @@ func _replay_show(i: int, lab: Label) -> void:
 	board.show_snapshot(seg["u"])
 	if seg["k"] in ["shift", "segment", "nova", "gate_lost"]:
 		fx.play(seg["k"], seg)
+
+
+## il pannello delle azioni è alto quanto il suo contenuto (senza coprire inutilmente la mappa)
+func _process(_dt: float) -> void:
+	if act_panel == null or not act_panel.visible:
+		return
+	var want := act_box.get_combined_minimum_size().y + 28.0
+	var room := size.y - 70.0 - 200.0
+	act_panel.anchor_bottom = 0.0
+	act_panel.offset_bottom = act_panel.offset_top + clampf(want, 120.0, room)

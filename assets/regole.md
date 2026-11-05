@@ -134,7 +134,7 @@ Una stella terziaria scelta a caso sta per esplodere. Dodici StarForce devono po
 
 ## Comandi della versione digitale
 
-- **Telecamera**: trascina per ruotare, rotella o pizzico per avvicinare, Maiusc + trascina (o tasto destro) per spostare la vista.
+- **Telecamera**: trascina per ruotare, rotella o pizzico per avvicinare, tasto destro (o Maiusc + trascina, o due dita) per spostare la vista; da tastiera Q ed E ruotano, le frecce spostano, + e - avvicinano. Il pulsante **Vista dall'alto** mostra la mappa piatta come quella di carta, con la quota Zulu accanto a stelle e flotte; **Centra** riporta la vista sulle tue forze.
 - **Piano**: clic su una tua flotta (o sull'elenco a destra), poi clic su un esagono o su una stella per la destinazione. La quota Zulu si cambia con i pulsanti o con i tasti W e S. La sfera azzurra è la portata sicura; le linee dei piani sono verdi (sicuro), gialle, arancioni o rosse secondo il rischio.
 - **Piano dell'IA**: riempie il piano con i suggerimenti dell'avversario automatico, che puoi poi modificare.
 - **Grafica**: Reborn (astronavi e StarGate in 3D, effetti di luce) oppure originale (la mappa e le pedine SPI).

@@ -14,6 +14,7 @@ signal picked_unit(id: String)
 signal picked_hex(h: int)
 signal picked_tac(p: Vector2i)
 signal hover_hex(h: int)
+signal hover_tac(p: Vector2i)
 
 var eng: SFEngine
 var viewer := 0                 # lato che guarda (-1 pubblico, -2 tutto)
@@ -57,7 +58,15 @@ var _drag_btn := 0
 var _press_pos := Vector2.ZERO
 var _moved := 0.0
 var _touches := {}
+var input_locked := false      # true con le tendine (hotseat) aperte
+const DIST_MIN := 5.0
+const DIST_MAX := 140.0
+const PITCH_MIN := -1.55
+const PITCH_MAX := 0.15
 var hover_h := -1
+var hot_hex := -1
+var top_view := false
+const STEM_A := 0.2
 var _t := 0.0
 
 const MAP_PX := 3072.0
@@ -108,6 +117,8 @@ func set_style(st: String) -> void:
 	refresh()
 	if tactical:
 		build_tactical()
+	if top_view:
+		_fix_labels(self)
 
 
 # ================================================================ ambiente e telecamera
@@ -169,7 +180,15 @@ func _build_camera() -> void:
 func _update_cam() -> void:
 	pivot.position = target
 	pivot.rotation = Vector3(pitch, yaw, 0)
-	cam.position = Vector3(0, 0, dist)
+	if top_view:
+		# dall'alto si usa la proiezione ortogonale: ogni stella sta esattamente sopra il suo esagono,
+		# come sulla mappa di carta
+		cam.projection = Camera3D.PROJECTION_ORTHOGONAL
+		cam.size = dist * 0.83
+		cam.position = Vector3(0, 0, 45.0)
+	else:
+		cam.projection = Camera3D.PROJECTION_PERSPECTIVE
+		cam.position = Vector3(0, 0, dist)
 
 
 func focus(p: Vector3, d := -1.0) -> void:
@@ -200,73 +219,132 @@ func _process(dt: float) -> void:
 			var tn := tac_units.get_node_or_null(id)
 			if tn != null:
 				tn.position = tn.position.lerp(tac_pos[id], minf(1.0, dt * 5.0))
+	if is_instance_valid(hint):
+		var r: Node3D = hint.get_node("anello")
+		var k := 1.0 + 0.25 * sin(_t * 5.0)
+		r.scale = Vector3(k, k, k)
+		if top_view:
+			r.rotation = Vector3.ZERO
+		else:
+			r.rotation.y += dt
 	if range_bubble != null and range_bubble.visible:
 		var m: StandardMaterial3D = range_bubble.material_override
 		m.albedo_color.a = 0.05 + 0.02 * sin(_t * 2.0)
 
 
-func _unhandled_input(ev: InputEvent) -> void:
+## true se il punto dello schermo è sopra un pannello dell'interfaccia (lì il mouse non muove la mappa)
+func _over_gui(sp: Vector2) -> bool:
+	var c := get_viewport().gui_get_hovered_control()
+	if c == null:
+		return false
+	return c.get_global_rect().has_point(sp) and c.mouse_filter != Control.MOUSE_FILTER_IGNORE
+
+
+## Comandi della telecamera. Si usa _input (non _unhandled_input) e si controlla a mano se sotto il
+## puntatore c'è un pannello: così il rilascio del tasto arriva sempre e il trascinamento non resta
+## "appeso" quando il mouse finisce sopra un pannello, e Maiusc si legge dall'evento stesso
+## (nel browser il tasto può risultare premuto per sempre se si perde il rilascio).
+func _input(ev: InputEvent) -> void:
+	if not is_visible_in_tree() or input_locked:
+		_drag = false
+		return
 	if ev is InputEventScreenTouch:
 		if ev.pressed:
+			if _over_gui(ev.position):
+				return
 			_touches[ev.index] = ev.position
 		else:
 			_touches.erase(ev.index)
 		return
-	if ev is InputEventScreenDrag and _touches.size() >= 2:
-		var old: Vector2 = _touches.get(ev.index, ev.position)
-		var other := Vector2.ZERO
-		for k in _touches:
-			if k != ev.index:
-				other = _touches[k]
-		var d0 := old.distance_to(other)
-		var d1: float = ev.position.distance_to(other)
-		if d0 > 1.0:
-			dist = clampf(dist * d0 / maxf(d1, 1.0), 6.0, 140.0)
-		# due dita che scorrono insieme spostano la vista (metà del movimento: il punto medio)
-		var right := cam.global_transform.basis.x
-		var fwd := Vector3(-sin(yaw), 0, -cos(yaw))
-		var rel: Vector2 = (ev.position - old) * 0.5
-		target_goal += (-right * rel.x + fwd * rel.y) * dist * 0.0016
-		target_goal.y = 0.0
-		_touches[ev.index] = ev.position
-		get_viewport().set_input_as_handled()
+	if ev is InputEventScreenDrag:
+		if not _touches.has(ev.index):
+			return
+		if _touches.size() >= 2:
+			var old: Vector2 = _touches[ev.index]
+			var other := Vector2.ZERO
+			for k in _touches:
+				if k != ev.index:
+					other = _touches[k]
+			var d0 := old.distance_to(other)
+			var d1: float = ev.position.distance_to(other)
+			if d0 > 1.0:
+				dist = clampf(dist * d0 / maxf(d1, 1.0), DIST_MIN, DIST_MAX)
+			# due dita che scorrono insieme spostano la vista (metà del movimento: il punto medio)
+			_pan((ev.position - old) * 0.5)
+			_touches[ev.index] = ev.position
 		return
 	if ev is InputEventMagnifyGesture:
-		dist = clampf(dist / ev.factor, 6.0, 140.0)
+		if not _over_gui(ev.position):
+			dist = clampf(dist / ev.factor, DIST_MIN, DIST_MAX)
 		return
 	if ev is InputEventPanGesture:
-		dist = clampf(dist * (1.0 + ev.delta.y * 0.05), 6.0, 140.0)
+		if not _over_gui(ev.position):
+			dist = clampf(dist * (1.0 + ev.delta.y * 0.05), DIST_MIN, DIST_MAX)
+		return
+	if ev is InputEventKey and ev.pressed and not ev.echo:
+		if get_viewport().gui_get_focus_owner() is LineEdit or get_viewport().gui_get_focus_owner() is SpinBox:
+			return
+		match ev.keycode:
+			KEY_Q:
+				yaw += 0.26
+			KEY_E:
+				yaw -= 0.26
+			KEY_LEFT:
+				_pan(Vector2(60, 0))
+			KEY_RIGHT:
+				_pan(Vector2(-60, 0))
+			KEY_UP:
+				_pan(Vector2(0, 60))
+			KEY_DOWN:
+				_pan(Vector2(0, -60))
+			KEY_EQUAL, KEY_KP_ADD:
+				dist = clampf(dist * 0.85, DIST_MIN, DIST_MAX)
+			KEY_MINUS, KEY_KP_SUBTRACT:
+				dist = clampf(dist * 1.18, DIST_MIN, DIST_MAX)
 		return
 	if ev is InputEventMouseButton:
+		if ev.pressed and _over_gui(ev.position):
+			return
 		if ev.button_index == MOUSE_BUTTON_WHEEL_UP and ev.pressed:
-			dist = clampf(dist * 0.9, 6.0, 140.0)
+			dist = clampf(dist * 0.9, DIST_MIN, DIST_MAX)
 		elif ev.button_index == MOUSE_BUTTON_WHEEL_DOWN and ev.pressed:
-			dist = clampf(dist * 1.1, 6.0, 140.0)
+			dist = clampf(dist * 1.1, DIST_MIN, DIST_MAX)
 		elif ev.button_index in [MOUSE_BUTTON_LEFT, MOUSE_BUTTON_RIGHT, MOUSE_BUTTON_MIDDLE]:
 			if ev.pressed:
 				_drag = true
 				_drag_btn = ev.button_index
 				_press_pos = ev.position
 				_moved = 0.0
-			else:
+			elif _drag and ev.button_index == _drag_btn:
 				_drag = false
-				if ev.button_index == MOUSE_BUTTON_LEFT and _moved < 8.0 and _touches.size() <= 1:
+				if ev.button_index == MOUSE_BUTTON_LEFT and _moved < 8.0 and _touches.size() <= 1 and not _over_gui(ev.position):
 					_click(ev.position)
 	elif ev is InputEventMouseMotion:
+		if _drag and ev.button_mask == 0:
+			# il rilascio è andato perso (fuori dalla finestra): si chiude il trascinamento
+			_drag = false
 		if _drag and _touches.size() <= 1:
 			_moved += ev.relative.length()
 			if _moved > 6.0:
-				if _drag_btn == MOUSE_BUTTON_LEFT and not Input.is_key_pressed(KEY_SHIFT):
+				if _drag_btn == MOUSE_BUTTON_LEFT and not ev.shift_pressed:
 					yaw -= ev.relative.x * 0.006
-					pitch = clampf(pitch - ev.relative.y * 0.005, -1.5, 0.15)
+					if not top_view:
+						pitch = clampf(pitch - ev.relative.y * 0.005, PITCH_MIN, PITCH_MAX)
 				else:
-					var right := cam.global_transform.basis.x
-					var fwd := Vector3(-sin(yaw), 0, -cos(yaw))
-					var k := dist * 0.0016
-					target_goal += (-right * ev.relative.x + fwd * ev.relative.y) * k
-					target_goal.y = 0.0
-		else:
+					_pan(ev.relative)
+		elif not _over_gui(ev.position):
 			_hover(ev.position)
+
+
+func _pan(rel: Vector2) -> void:
+	var right := Vector3(cos(yaw), 0, -sin(yaw))
+	var fwd := Vector3(-sin(yaw), 0, -cos(yaw))
+	var k := dist * 0.0016
+	target_goal += (-right * rel.x + fwd * rel.y) * k
+	target_goal.y = 0.0
+	var lim := 30.0 if not tactical else 14.0
+	target_goal.x = clampf(target_goal.x, -lim, lim)
+	target_goal.z = clampf(target_goal.z, -lim, lim)
 
 
 ## raggio dal punto dello schermo al piano orizzontale y = h
@@ -301,13 +379,26 @@ static func hex_at_world(p: Vector3) -> int:
 
 func _hover(sp: Vector2) -> void:
 	if tactical:
+		_hover_tac(sp)
 		return
-	var p = _ray_plane(sp)
 	var h := -1
-	if p != null:
-		h = hex_at_world(p)
+	# prima le stelle vicine al puntatore (in pixel): nella vista inclinata sono lontane dal loro esagono
+	var bd := 20.0
+	for l in star_nodes:
+		var n: Node3D = star_nodes[l]
+		if cam.is_position_behind(n.global_position):
+			continue
+		var d := cam.unproject_position(n.global_position).distance_to(sp)
+		if d < bd:
+			bd = d
+			h = Hex.hexof(l)
+	if h < 0:
+		var p = _ray_plane(sp)
+		if p != null:
+			h = hex_at_world(p)
 	if h != hover_h:
 		hover_h = h
+		_highlight_hex(h)
 		hover_hex.emit(h)
 
 
@@ -453,7 +544,9 @@ func _star_node(l: Vector3i, cls: String, name: String) -> Node3D:
 		n.add_child(halo)
 	# stelo fino al piano e piccolo anello sul piano
 	if l.z != 0:
-		n.add_child(_stem(Vector3.ZERO, Vector3(0, -float(l.z), 0), Color(col.r, col.g, col.b, 0.45)))
+		var stem := _stem(Vector3.ZERO, Vector3(0, -float(l.z), 0), Color(col.r, col.g, col.b, STEM_A))
+		stem.name = "stelo"
+		n.add_child(stem)
 	var foot := MeshInstance3D.new()
 	var tm := TorusMesh.new()
 	tm.inner_radius = 0.16
@@ -465,24 +558,25 @@ func _star_node(l: Vector3i, cls: String, name: String) -> Node3D:
 	fm.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
 	foot.material_override = fm
 	foot.position = Vector3(0, -float(l.z) + 0.01, 0)
+	foot.name = "piede"
 	n.add_child(foot)
-	if true:
-		var lab := Label3D.new()
-		lab.text = "%s %s" % [name, Hex.fmt(l)] if cls != "t" else name
-		lab.font = UI.font_body
-		lab.font_size = 34 if cls == "h" else (28 if cls == "s" else 22)
-		lab.pixel_size = 0.00048
-		lab.fixed_size = true
-		lab.visible = show_names == 2 or (show_names == 1 and cls != "t")
-		lab.set_meta("cls", cls)
-		lab.modulate = Color(col.r, col.g, col.b, 0.95) if cls != "t" else Color(0.85, 0.8, 0.8, 0.75)
-		lab.outline_size = 8
-		lab.outline_modulate = Color(0, 0, 0, 0.8)
-		lab.billboard = BaseMaterial3D.BILLBOARD_ENABLED
-		lab.position = Vector3(0, size + 0.35, 0)
-		lab.no_depth_test = false
-		lab.name = "nome"
-		n.add_child(lab)
+	n.set_meta("cls", cls)
+	n.set_meta("nome", name)
+	n.set_meta("lz", l)
+	var lab := Label3D.new()
+	lab.font = UI.font_body
+	lab.font_size = 30 if cls == "h" else (24 if cls == "s" else 20)
+	lab.pixel_size = 0.00048
+	lab.fixed_size = true
+	lab.modulate = Color(col.r, col.g, col.b, 0.85) if cls != "t" else Color(0.85, 0.8, 0.8, 0.7)
+	lab.outline_size = 8
+	lab.outline_modulate = Color(0, 0, 0, 0.85)
+	lab.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+	lab.offset = Vector2(0, 34)
+	lab.no_depth_test = false
+	lab.name = "nome"
+	n.add_child(lab)
+	_star_label(n)
 	return n
 
 
@@ -529,9 +623,78 @@ func _stem(a: Vector3, b: Vector3, col: Color, width := 0.025) -> MeshInstance3D
 func set_names(level: int) -> void:
 	show_names = level
 	for l in star_nodes:
-		var lab = star_nodes[l].get_node_or_null("nome")
-		if lab != null:
-			lab.visible = level == 2 or (level == 1 and lab.get_meta("cls", "t") != "t")
+		_star_label(star_nodes[l])
+
+
+## testo e visibilità del nome di una stella: livello 1 solo i nomi delle stelle principali,
+## livello 2 tutte con la posizione; nella vista dall'alto si aggiunge sempre la quota Zulu
+## (come sulla mappa di carta); l'esagono sotto il mouse mostra sempre nome e posizione
+func _star_label(n: Node3D) -> void:
+	var lab: Label3D = n.get_node_or_null("nome")
+	if lab == null:
+		return
+	var cls: String = n.get_meta("cls", "t")
+	var l: Vector3i = n.get_meta("lz", Vector3i.ZERO)
+	var nm: String = n.get_meta("nome", "")
+	var hot := Hex.hexof(l) == hot_hex
+	var zs := ("+%d" % l.z) if l.z > 0 else str(l.z)
+	if hot or show_names == 2:
+		lab.text = "%s %s" % [nm, Hex.fmt(l)]
+	elif top_view:
+		lab.text = "%s %s" % [nm, zs] if cls != "t" else zs
+	else:
+		lab.text = nm
+	lab.visible = hot or show_names == 2 or (show_names == 1 and cls != "t") or (top_view and show_names >= 1)
+	lab.modulate.a = 1.0 if hot else (0.85 if cls != "t" else 0.6)
+	var stem: MeshInstance3D = n.get_node_or_null("stelo")
+	if stem != null:
+		var m: StandardMaterial3D = stem.material_override
+		m.albedo_color.a = 0.85 if hot else STEM_A
+
+
+## evidenzia le stelle dell'esagono sotto il mouse (nome completo e stelo acceso)
+func _highlight_hex(h: int) -> void:
+	if h == hot_hex:
+		return
+	var old := hot_hex
+	hot_hex = h
+	for l in star_nodes:
+		var hh := Hex.hexof(l)
+		if hh == old or hh == h:
+			_star_label(star_nodes[l])
+
+
+## in proiezione ortogonale le etichette "a dimensione fissa" escono molto più piccole:
+## si ingrandiscono di conseguenza (il valore di partenza resta nel meta "px0")
+func _fix_labels(root: Node) -> void:
+	var k := 2.6 if top_view else 1.0
+	for c in root.find_children("*", "Label3D", true, false):
+		var lab: Label3D = c
+		if not lab.fixed_size:
+			continue
+		if not lab.has_meta("px0"):
+			lab.set_meta("px0", lab.pixel_size)
+		lab.pixel_size = float(lab.get_meta("px0")) * k
+
+
+## vista dall'alto (come la mappa di carta) oppure vista 3D inclinata
+func set_top_view(on: bool) -> void:
+	top_view = on
+	pitch = -PI / 2.0 if on else (-0.65 if tactical else -0.62)
+	if not tactical:
+		yaw = 0.0 if on else -0.35
+	for l in star_nodes:
+		_star_label(star_nodes[l])
+	refresh()
+	_fix_labels(self)
+
+
+## riporta la vista al punto indicato con l'inclinazione di partenza
+func reset_view(p: Vector3, d: float) -> void:
+	target_goal = p
+	dist = d
+	yaw = 0.0 if top_view else -0.35
+	pitch = -PI / 2.0 if top_view else (-0.65 if tactical else -0.62)
 
 
 # ================================================================ unità
@@ -629,7 +792,79 @@ func _refresh_units(snap) -> void:
 			var sel = n.get_node_or_null("sel")
 			if sel != null:
 				sel.visible = id == selected
+	_stack_tags(stacks, seen, where)
 	_draw_overlays()
+	if top_view:
+		_fix_labels(over_root)
+
+
+## una sola etichetta per gruppo di unità dello stesso lato nella stessa LiteZulu ("A C"),
+## sempre leggibile sopra stelle e nomi; nella vista dall'alto riporta anche la quota Zulu
+func _stack_tags(stacks: Dictionary, seen: Dictionary, where: Dictionary) -> void:
+	var root := over_root.get_node_or_null("sigle")
+	if root != null:
+		root.free()
+	root = Node3D.new()
+	root.name = "sigle"
+	over_root.add_child(root)
+	for key in stacks:
+		var by_side := {}
+		for id in stacks[key]:
+			var u: Dictionary = eng.units[id]
+			if seen[id] != "full":
+				continue
+			var sd: int = u["side"]
+			if not by_side.has(sd):
+				by_side[sd] = []
+			by_side[sd].append(id)
+		var j := 0
+		for sd in by_side:
+			var ids: Array = by_side[sd]
+			var letters := []
+			var has_gate := false
+			for id in ids:
+				if eng.units[id]["kind"] == "gate":
+					has_gate = true
+				else:
+					letters.append(str(eng.units[id]["label"]))
+			var l: Vector3i = where[ids[0]]
+			if has_gate and not letters.is_empty() and style != "originale":
+				# la StarGate ha la sua etichetta, più in basso; le StarForce sopra
+				_tag(root, "StarGate", Hex.world(l), _side_col(sd), 22, 66)
+				has_gate = false
+				j = 1
+			var zs := ("+%d" % l.z) if l.z > 0 else str(l.z)
+			var txt := " ".join(letters)
+			if has_gate:
+				txt = "StarGate"
+			if top_view:
+				txt += "  " + zs
+			if style == "originale":
+				# le pedine mostrano già la sigla: serve solo la quota, e solo dall'alto
+				if not top_view:
+					continue
+				txt = zs
+			_tag(root, txt, Hex.world(l), _side_col(sd), 22 if has_gate else 30, (66 if has_gate else 62) + 44 * j)
+			j += 1
+
+
+func _tag(root: Node3D, txt: String, pos: Vector3, col: Color, fs: int, up := 60) -> void:
+	var tag := Label3D.new()
+	tag.text = txt
+	tag.font = UI.font_head
+	tag.font_size = fs
+	tag.pixel_size = 0.0006
+	tag.fixed_size = true
+	tag.modulate = col.lightened(0.45)
+	tag.outline_size = 12
+	tag.outline_modulate = Color(0, 0, 0, 0.95)
+	tag.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+	tag.no_depth_test = true
+	tag.render_priority = 10
+	tag.outline_render_priority = 9
+	tag.position = pos
+	tag.offset = Vector2(0, up)
+	root.add_child(tag)
 
 
 func _hex_pos(h: int) -> Vector3:
@@ -648,7 +883,7 @@ func _unit_node(u: Dictionary, vis: String, l: Vector3i, neut: bool) -> Node3D:
 		var h := Hex.hexof(l)
 		var lim := Hex.zlimit(h)
 		var col2 := Color(col.r, col.g, col.b, 0.13)
-		n.add_child(_stem(Vector3(0, -lim, 0), Vector3(0, lim, 0), col2, 0.035))
+		n.add_child(_stem(Vector3(0, -lim, 0), Vector3(0, lim, 0), Color(col2, 0.08), 0.03))
 	var body := Node3D.new()
 	body.name = "corpo"
 	n.add_child(body)
@@ -659,7 +894,7 @@ func _unit_node(u: Dictionary, vis: String, l: Vector3i, neut: bool) -> Node3D:
 		if sp.texture == null:
 			sp.texture = _generic_counter(col, label, u["kind"] == "gate")
 		sp.billboard = BaseMaterial3D.BILLBOARD_ENABLED
-		sp.pixel_size = 0.0135 if u["kind"] == "sf" else 0.016
+		sp.pixel_size = (0.0135 if u["kind"] == "sf" else 0.016) if vis == "full" else 0.011
 		sp.shaded = false
 		sp.no_depth_test = false
 		if vis == "hex":
@@ -683,22 +918,11 @@ func _unit_node(u: Dictionary, vis: String, l: Vector3i, neut: bool) -> Node3D:
 		if u["kind"] == "gate":
 			model = Ships.gate_model(u["race"], col)
 		else:
-			model = Ships.fleet(u["race"], col, 4)
+			model = Ships.fleet(u["race"], col, 1)
+			model.scale = Vector3.ONE * 1.25
 		body.add_child(model)
 		if neut:
 			Ships.dim(model)
-		var tag := Label3D.new()
-		tag.text = u["label"]
-		tag.font = UI.font_head
-		tag.font_size = 30
-		tag.pixel_size = 0.0006
-		tag.fixed_size = true
-		tag.modulate = col.lightened(0.3)
-		tag.outline_size = 8
-		tag.outline_modulate = Color(0, 0, 0, 0.9)
-		tag.billboard = BaseMaterial3D.BILLBOARD_ENABLED
-		tag.position = Vector3(0, 0.55 if u["kind"] == "sf" else 0.95, 0)
-		body.add_child(tag)
 	# stelo verso il piano
 	if vis == "full" and l.z != 0:
 		n.add_child(_stem(Vector3.ZERO, Vector3(0, -float(l.z) - 0.25, 0), Color(col.r, col.g, col.b, 0.35), 0.018))
@@ -798,6 +1022,37 @@ func set_cursor(l, col := UI.YELLOW) -> void:
 	cursor.add_child(_stem(Vector3(0, -float(l.z) - lim, 0), Vector3(0, -float(l.z) + lim, 0), Color(col, 0.15), 0.05))
 
 
+## anello giallo lampeggiante su una LiteZulu (lo usa il tutorial per indicare dove cliccare)
+var hint: Node3D
+
+func set_hint(l) -> void:
+	if is_instance_valid(hint):
+		hint.queue_free()
+	hint = null
+	if l == null:
+		return
+	hint = Node3D.new()
+	hint.position = Hex.world(l)
+	var ring := MeshInstance3D.new()
+	var tm := TorusMesh.new()
+	tm.inner_radius = 0.75
+	tm.outer_radius = 0.9
+	tm.rings = 40
+	ring.mesh = tm
+	var m := StandardMaterial3D.new()
+	m.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	m.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	m.albedo_color = Color(UI.YELLOW, 0.9)
+	m.no_depth_test = true
+	ring.material_override = m
+	ring.name = "anello"
+	hint.add_child(ring)
+	_tag(hint, "clicca qui", Vector3.ZERO, UI.YELLOW, 26, -70)
+	over_root.add_child(hint)
+	if top_view:
+		_fix_labels(hint)
+
+
 func set_range(center, radius: float) -> void:
 	if center == null or radius <= 0:
 		range_bubble.visible = false
@@ -873,7 +1128,7 @@ func _arc(a: Vector3, b: Vector3, col: Color, segs := 24) -> Node3D:
 
 # ================================================================ Tactical Display
 
-const TAC_SCALE := 1.6
+const TAC_SCALE := 2.2
 
 func show_tactical(on: bool) -> void:
 	tactical = on
@@ -883,8 +1138,8 @@ func show_tactical(on: bool) -> void:
 		tac_root.position = Vector3.ZERO
 		build_tactical()
 		target_goal = Vector3.ZERO
-		dist = 24.0
-		pitch = -0.6
+		dist = 34.0
+		pitch = -PI / 2.0 if top_view else -0.65
 	else:
 		target_goal = Vector3.ZERO
 		dist = 62.0
@@ -922,24 +1177,48 @@ func build_tactical() -> void:
 				im.surface_add_vertex(c + Vector3(cos(a2), 0, sin(a2)) * rad)
 	im.surface_end()
 	tac_root.add_child(mi)
-	# etichette degli esagoni (sigla a tre cifre) sul piano 0
-	for a in Hex.t_all():
-		var lab := Label3D.new()
-		lab.text = Hex.tlabel(a)
-		lab.font = UI.font_mono
-		lab.font_size = 22
-		lab.pixel_size = 0.01
-		lab.modulate = Color(0.95, 0.6, 0.75, 0.55)
-		lab.rotation = Vector3(-PI / 2, 0, 0)
-		lab.position = Hex.tworld(Vector3i(a.x, a.y, 0)) * TAC_SCALE + Vector3(0, 0.01, 0.42)
-		tac_root.add_child(lab)
+	# sigla dell'esagono sotto il mouse (una sola, invece di 91 etichette sempre accese)
+	var hl := Label3D.new()
+	hl.name = "sigla_hover"
+	hl.font = UI.font_mono
+	hl.font_size = 30
+	hl.pixel_size = 0.0007
+	hl.fixed_size = true
+	hl.modulate = Color(1, 0.85, 0.4)
+	hl.outline_size = 8
+	hl.outline_modulate = Color(0, 0, 0, 0.9)
+	hl.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+	hl.no_depth_test = true
+	hl.render_priority = 8
+	hl.visible = false
+	tac_root.add_child(hl)
+	var hx := MeshInstance3D.new()
+	hx.name = "esagono_hover"
+	var hcy := CylinderMesh.new()
+	hcy.top_radius = 0.5773503 * TAC_SCALE * 0.97
+	hcy.bottom_radius = hcy.top_radius
+	hcy.height = 0.04
+	hcy.radial_segments = 6
+	hcy.rings = 1
+	hx.mesh = hcy
+	var hxm := StandardMaterial3D.new()
+	hxm.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	hxm.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	hxm.albedo_color = Color(1, 0.85, 0.4, 0.18)
+	hx.material_override = hxm
+	hx.rotation.y = deg_to_rad(30)
+	hx.visible = false
+	tac_root.add_child(hx)
 	# asse delle MiniZulu
 	for z in range(-5, 6):
 		var lz := Label3D.new()
 		lz.text = ("+%d" % z) if z > 0 else str(z)
 		lz.font = UI.font_mono
-		lz.font_size = 26
-		lz.pixel_size = 0.012
+		lz.font_size = 24
+		lz.pixel_size = 0.0006
+		lz.fixed_size = true
+		lz.outline_size = 8
+		lz.outline_modulate = Color(0, 0, 0, 0.9)
 		lz.modulate = Color(1, 0.85, 0.3, 0.8)
 		lz.billboard = BaseMaterial3D.BILLBOARD_ENABLED
 		lz.position = Vector3(-9.6 * TAC_SCALE * 0.5 - 1.5, z * TAC_SCALE, 0)
@@ -978,6 +1257,33 @@ func _tac_axial(lp: Vector3) -> Vector2i:
 	return Hex.cube_round(Vector2(q, r))
 
 
+var _tac_hover := Vector2i(99, 99)
+
+func _hover_tac(sp: Vector2) -> void:
+	var a := Vector2i(99, 99)
+	var p = _ray_plane(sp, tac_root.position.y)
+	if p != null:
+		var lp: Vector3 = (p - tac_root.position) / TAC_SCALE
+		var aa := _tac_axial(lp)
+		if Hex.adist(aa, Vector2i.ZERO) <= 5:
+			a = aa
+	if a == _tac_hover:
+		return
+	_tac_hover = a
+	var hl: Label3D = tac_root.get_node_or_null("sigla_hover")
+	var hx: MeshInstance3D = tac_root.get_node_or_null("esagono_hover")
+	if hl == null:
+		return
+	var on := a != Vector2i(99, 99)
+	hl.visible = on
+	hx.visible = on
+	if on:
+		hl.text = Hex.tlabel(a)
+		hl.position = tac_world(Vector3i(a.x, a.y, 0)) + Vector3(0, 0.35, 0)
+		hx.position = tac_world(Vector3i(a.x, a.y, 0)) + Vector3(0, 0.02, 0)
+	hover_tac.emit(a)
+
+
 func refresh_tac() -> void:
 	if eng.tac == null:
 		return
@@ -999,11 +1305,11 @@ func refresh_tac() -> void:
 		var pos: Vector3i = p if known else Vector3i(real.x, real.y, 0)
 		var n: Node3D = tac_units.get_node_or_null(id)
 		var mode: String = t.tu[id]["mode"]
-		var sig := "%s|%s|%s|%s|%s" % [known, mode, t.is_disrupted(id), t.tu[id]["neut"], style]
+		var sig := "%s|%s|%s|%s|%s|%d" % [known, mode, t.is_disrupted(id), t.tu[id]["neut"], style, pos.z]
 		if n == null or n.get_meta("sig", "") != sig:
 			if n != null:
 				n.free()
-			n = _tac_node(u, known, mode, t.is_disrupted(id), t.tu[id]["neut"])
+			n = _tac_node(u, known, mode, t.is_disrupted(id), t.tu[id]["neut"], pos.z)
 			n.name = id
 			n.set_meta("sig", sig)
 			tac_units.add_child(n)
@@ -1014,7 +1320,7 @@ func refresh_tac() -> void:
 			var k: int = placed.get(pos, 0)
 			placed[pos] = k + 1
 			var ang := TAU * float(k) / float(cnt)
-			off = Vector3(cos(ang), 0.3, sin(ang)) * 0.55
+			off = Vector3(cos(ang) * 0.75, 0.0, sin(ang) * 0.75)
 		tac_pos[id] = tac_world(pos) + off
 		var sel = n.get_node_or_null("sel")
 		if sel != null:
@@ -1023,13 +1329,33 @@ func refresh_tac() -> void:
 		if not alive.has(str(c.name)):
 			c.queue_free()
 			tac_pos.erase(str(c.name))
+	if top_view:
+		_fix_labels(tac_root)
 
 
-func _tac_node(u: Dictionary, known: bool, mode: String, dis: bool, neut: bool) -> Node3D:
+func _tac_node(u: Dictionary, known: bool, mode: String, dis: bool, neut: bool, pz := 0) -> Node3D:
 	var n := Node3D.new()
 	var col := _side_col(u["side"])
+	if known and pz != 0:
+		# stelo fino al piano 0 con un dischetto: si legge a colpo d'occhio la MiniZulu
+		n.add_child(_stem(Vector3.ZERO, Vector3(0, -float(pz) * TAC_SCALE, 0), Color(col, 0.45), 0.03))
+	if known:
+		var foot := MeshInstance3D.new()
+		var fcy := CylinderMesh.new()
+		fcy.top_radius = 0.28
+		fcy.bottom_radius = 0.28
+		fcy.height = 0.03
+		fcy.radial_segments = 16
+		foot.mesh = fcy
+		var fm := StandardMaterial3D.new()
+		fm.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		fm.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+		fm.albedo_color = Color(col, 0.55)
+		foot.material_override = fm
+		foot.position = Vector3(0, -float(pz) * TAC_SCALE + 0.02, 0)
+		n.add_child(foot)
 	if not known:
-		n.add_child(_stem(Vector3(0, -5 * TAC_SCALE, 0), Vector3(0, 5 * TAC_SCALE, 0), Color(col, 0.25), 0.07))
+		n.add_child(_stem(Vector3(0, -5 * TAC_SCALE, 0), Vector3(0, 5 * TAC_SCALE, 0), Color(col, 0.12), 0.05))
 	var body := Node3D.new()
 	body.name = "corpo"
 	n.add_child(body)
@@ -1048,22 +1374,34 @@ func _tac_node(u: Dictionary, known: bool, mode: String, dis: bool, neut: bool) 
 		var model: Node3D
 		if u["kind"] == "gate":
 			model = Ships.gate_model(u["race"], col)
-			model.scale = Vector3.ONE * 1.9
+			model.scale = Vector3.ONE * 1.5
 		else:
-			model = Ships.fleet(u["race"], col, 4, mode == "battle")
-			model.scale = Vector3.ONE * 2.6
+			model = Ships.fleet(u["race"], col, 1, mode == "battle")
+			model.scale = Vector3.ONE * 2.4
 		body.add_child(model)
 		if dis or neut:
 			Ships.dim(model)
 	var tag := Label3D.new()
-	tag.text = u["label"] + ("  B" if mode == "battle" and u["kind"] == "sf" else "") + ("  disgregata" if dis and u["kind"] == "sf" else "") + ("  neutralizzata" if neut else "")
+	var extra := []
+	if u["kind"] == "sf" and mode == "battle":
+		extra.append("batt.")
+	if dis and u["kind"] == "sf":
+		extra.append("disgr.")
+	if neut:
+		extra.append("neutr.")
+	tag.text = (("StarGate " if u["kind"] == "gate" else "") + str(u["label"]) + ("  " + " ".join(extra) if not extra.is_empty() else "")).strip_edges()
 	tag.font = UI.font_head
-	tag.font_size = 30
-	tag.pixel_size = 0.012
-	tag.modulate = col.lightened(0.35)
-	tag.outline_size = 8
+	tag.font_size = 28
+	tag.pixel_size = 0.0006
+	tag.fixed_size = true
+	tag.modulate = col.lightened(0.45)
+	tag.outline_size = 12
+	tag.outline_modulate = Color(0, 0, 0, 0.95)
 	tag.billboard = BaseMaterial3D.BILLBOARD_ENABLED
-	tag.position = Vector3(0, 1.0, 0)
+	tag.no_depth_test = true
+	tag.render_priority = 10
+	tag.outline_render_priority = 9
+	tag.position = Vector3(0, 1.3 if u["kind"] == "gate" else 0.75, 0)
 	body.add_child(tag)
 	var sel := MeshInstance3D.new()
 	var tm := TorusMesh.new()
@@ -1094,16 +1432,16 @@ func show_casts(casts: Array) -> void:
 				continue
 			var mi := MeshInstance3D.new()
 			var cy := CylinderMesh.new()
-			cy.top_radius = 0.5 * TAC_SCALE
-			cy.bottom_radius = 0.5 * TAC_SCALE
-			cy.height = 0.9 * TAC_SCALE
+			cy.top_radius = 0.42 * TAC_SCALE
+			cy.bottom_radius = 0.42 * TAC_SCALE
+			cy.height = 0.06
 			cy.radial_segments = 6
 			cy.rings = 1
 			mi.mesh = cy
 			var m := StandardMaterial3D.new()
 			m.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 			m.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-			m.albedo_color = Color(col, clampf(0.05 + 0.25 * float(eff) / float(pts), 0.05, 0.3))
+			m.albedo_color = Color(col, clampf(0.08 + 0.3 * float(eff) / float(pts), 0.08, 0.38))
 			m.blend_mode = BaseMaterial3D.BLEND_MODE_ADD
 			m.no_depth_test = false
 			mi.material_override = m

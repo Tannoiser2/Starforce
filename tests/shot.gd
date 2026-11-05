@@ -30,6 +30,13 @@ func _init() -> void:
 		g._select_sf(mine[1]["id"])
 		g._on_pick_hex(2427 * 1000 + 500 - 18)
 		await create_timer(1.0).timeout
+	if a.size() > 6 and a[6] == "top":
+		main.current.board.set_top_view(true)
+		await create_timer(1.5).timeout
+	if a.size() > 6 and a[6] == "tac":
+		if main.current.eng.tac != null:
+			main.current.board.show_tactical(true)
+		await create_timer(1.5).timeout
 	if a.size() > 6 and a[6] == "orig":
 		var g2 = main.current
 		g2.board.set_style("originale")

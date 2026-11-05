@@ -55,6 +55,14 @@ func _ready() -> void:
 	left.add_child(UI.title("StarForce", 86))
 	left.add_child(UI.head("ALPHA CENTAURI", 26, UI.YELLOW_L))
 	left.add_child(UI.label("Conflitto interstellare nel XXV secolo  |  SPI 1974, Redmond A. Simonsen", 18, UI.PINK_L))
+	var bt := UI.primary(UI.button("Prima volta? Tutorial guidato", 0, 56, 21))
+	bt.tooltip_text = "Una partita breve contro l'IA, spiegata passo per passo"
+	bt.pressed.connect(func():
+		_store()
+		main.start_game({"scenario": 1, "mode": "base", "tutorial": true,
+			"seats": [{"name": "", "ai": false, "level": 1}, {"name": "", "ai": true, "level": 1}],
+			"style": "reborn", "anim": 1.0, "ai_delay": 0.5, "seed": 2341}))
+	left.add_child(bt)
 	left.add_child(UI.hsep())
 	var sc := ScrollContainer.new()
 	sc.size_flags_vertical = Control.SIZE_EXPAND_FILL
