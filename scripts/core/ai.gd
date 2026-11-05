@@ -11,6 +11,10 @@ const D = preload("res://scripts/data/sf_data.gd")
 
 var level := 1
 var memo := {}
+## generatore casuale proprio: l'IA non deve consumare quello del motore, altrimenti online i
+## dispositivi (e i salvataggi ricaricati) divergerebbero
+var rng := RandomNumberGenerator.new()
+var _seeded := false
 
 
 func _init(lv := 1) -> void:
@@ -18,6 +22,9 @@ func _init(lv := 1) -> void:
 
 
 func decide(eng, s: int, req: Dictionary):
+	if not _seeded:
+		rng.seed = hash(str(eng.rng.seed) + "|" + str(s))
+		_seeded = true
 	match str(req.get("type", "")):
 		"plot":
 			return plot(eng, s, req)
@@ -28,7 +35,7 @@ func decide(eng, s: int, req: Dictionary):
 		"tplot":
 			return tplot(eng, s, req)
 		"xsign":
-			return 1 if eng.rng.randi_range(0, 1) == 0 else -1
+			return 1 if rng.randi_range(0, 1) == 0 else -1
 	return {}
 
 
@@ -81,7 +88,7 @@ func plot(eng, s: int, req: Dictionary) -> Dictionary:
 	for t in targets:
 		var lz: Vector3i = t["lz"]
 		var d := Hex.tdist(cen, lz)
-		var sc: float = float(t["w"]) * 10.0 - float(d) + eng.rng.randf() * 3.0
+		var sc: float = float(t["w"]) * 10.0 - float(d) + rng.randf() * 3.0
 		var guard := 0
 		for e in eng.live(-1, "sf"):
 			if eng.hostile(e["side"], s) and eng.visibility(e, s) != "none" and Hex.hexof(e["lz"]) == Hex.hexof(lz):
@@ -175,14 +182,14 @@ func _targets(eng, s: int) -> Array:
 		out.append({"lz": eng.star_hex_lz(int(obj)), "w": 2.2, "occ": true})
 	if eng.xeno > 0 and s != eng.xeno_side and out.is_empty():
 		# la Lega cerca le StarGate xenofobe ai margini del Volume
-		var k: int = memo.get("search", eng.rng.randi_range(0, 1000))
+		var k: int = memo.get("search", rng.randi_range(0, 1000))
 		memo["search"] = k
 		var hexes: Array = Hex.all_hexes()
 		var h2: int = hexes[k % hexes.size()]
 		var sign := 1 if (k / 7) % 2 == 0 else -1
 		out.append({"lz": Hex.lz(h2, sign * (Hex.zlimit(h2) + 2)), "w": 0.5})
 		if eng.turn % 6 == 0:
-			memo["search"] = eng.rng.randi_range(0, 1000)
+			memo["search"] = rng.randi_range(0, 1000)
 	return out
 
 
@@ -198,7 +205,7 @@ func _stage_point(eng, s: int, tlz: Vector3i, cen: Vector3i) -> Vector3i:
 				enemy = true
 		if enemy:
 			continue
-		var d = float(Hex.tdist(cen, a)) + eng.rng.randf() * 0.5
+		var d = float(Hex.tdist(cen, a)) + rng.randf() * 0.5
 		if d < bd:
 			bd = d
 			best = a
@@ -400,8 +407,8 @@ func tdeploy(eng, s: int, req: Dictionary) -> Dictionary:
 				for a in Hex.t_all():
 					if Hex.adist(a, Vector2i.ZERO) == 5:
 						ring.append(a)
-				var a0: Vector2i = ring[eng.rng.randi_range(0, ring.size() - 1)]
-				groups[key] = Vector3i(a0.x, a0.y, eng.rng.randi_range(-2, 2))
+				var a0: Vector2i = ring[rng.randi_range(0, ring.size() - 1)]
+				groups[key] = Vector3i(a0.x, a0.y, rng.randi_range(-2, 2))
 			out[id] = [groups[key], false]
 	return out
 

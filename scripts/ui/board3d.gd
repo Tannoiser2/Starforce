@@ -877,8 +877,8 @@ func show_tactical(on: bool) -> void:
 		tac_root.position = Vector3.ZERO
 		build_tactical()
 		target_goal = Vector3.ZERO
-		dist = 30.0
-		pitch = -0.55
+		dist = 24.0
+		pitch = -0.6
 	else:
 		target_goal = Vector3.ZERO
 		dist = 62.0
@@ -1042,10 +1042,10 @@ func _tac_node(u: Dictionary, known: bool, mode: String, dis: bool, neut: bool) 
 		var model: Node3D
 		if u["kind"] == "gate":
 			model = Ships.gate_model(u["race"], col)
-			model.scale = Vector3.ONE * 1.6
+			model.scale = Vector3.ONE * 1.9
 		else:
 			model = Ships.fleet(u["race"], col, 4, mode == "battle")
-			model.scale = Vector3.ONE * 1.8
+			model.scale = Vector3.ONE * 2.6
 		body.add_child(model)
 		if dis or neut:
 			Ships.dim(model)

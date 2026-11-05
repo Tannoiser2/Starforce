@@ -123,9 +123,21 @@ func _refresh() -> void:
 			who.append(0 if i == 0 else 1)
 	while names.size() < lati.size():
 		names.append("")
-	detail.add_child(UI.title(sc["nome"], 40))
-	detail.add_child(UI.label("%s  |  %s" % [sc["anno"], sc["orig"]], 18, UI.MUTED))
-	detail.add_child(UI.wrap(UI.label(sc["intro"], 19), 1000))
+	var top := HBoxContainer.new()
+	top.add_theme_constant_override("separation", 22)
+	detail.add_child(top)
+	var cov := TextureRect.new()
+	cov.texture = UI.tex("res://assets/misc/copertina.webp")
+	cov.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	cov.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	cov.custom_minimum_size = Vector2(190, 250)
+	top.add_child(cov)
+	var tv := VBoxContainer.new()
+	tv.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	top.add_child(tv)
+	tv.add_child(UI.title(sc["nome"], 40))
+	tv.add_child(UI.label("%s  |  %s" % [sc["anno"], sc["orig"]], 18, UI.MUTED))
+	tv.add_child(UI.wrap(UI.label(sc["intro"], 19), 800))
 	detail.add_child(UI.head("Vittoria", 18, UI.YELLOW))
 	for v in sc["vittoria"]:
 		detail.add_child(UI.wrap(UI.label("- " + v, 17), 1000))

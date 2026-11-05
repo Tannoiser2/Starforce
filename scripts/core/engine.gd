@@ -369,6 +369,9 @@ func replaying() -> bool:
 
 ## Decisioni simultanee (piani segreti): ognuno sceglie senza vedere le scelte altrui.
 func decide_all(seats: Array, reqs: Array) -> Array:
+	for i in seats.size():
+		reqs[i]["seat"] = seats[i]
+		reqs[i]["turn"] = turn
 	if online != null and online.has_method("decide_all") and not abort:
 		var rr = await online.decide_all(self, seats, reqs)
 		return rr
