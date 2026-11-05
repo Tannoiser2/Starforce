@@ -140,6 +140,31 @@ const FF_TELE_STELLAR := 8
 const FF_TELE_BATTLE := 16
 const FF_BREAKOFF_COST := 4
 
+## Tipo spettrale delle stelle più note (le altre: primarie e secondarie G/K, terziarie nane rosse M)
+const STAR_TYPE := {"Sol": "G", "Alpha Centauri": "G", "Sirio": "A", "Procione": "F", "Altair": "A",
+	"Tau Ceti": "G", "Epsilon Eridani": "K", "Epsilon Indi": "K", "61 Cygni": "K", "70 Ophiuchi": "K",
+	"36 Ophiuchi": "K", "Sigma Draconis": "K", "Beta Hydri": "G", "Delta Pavonis": "G", "82 Eridani": "G",
+	"Eta Cassiopeiae": "G", "p Eridani": "K", "HR 7703": "K", "HR 8832": "K", "40 Eridani": "K",
+	"CD-20°": "K", "Stella di Van Maanen": "D", "Wandering's End": "F", "Mondo natale xenofobo": "M"}
+## colori per tipo: [base, caldo (granuli), freddo (bordi e macchie), alone]
+const STAR_COLORS := {
+	"A": [Color("#dfe8ff"), Color("#ffffff"), Color("#7f9cff"), Color("#bcd0ff")],
+	"F": [Color("#fbf8ef"), Color("#ffffff"), Color("#d8b98a"), Color("#fff4dc")],
+	"G": [Color("#ffc94a"), Color("#fff09a"), Color("#c44a0e"), Color("#ffcc55")],
+	"K": [Color("#ff9a3c"), Color("#ffcf78"), Color("#8a2408"), Color("#ff9440")],
+	"M": [Color("#ff7a4a"), Color("#ffc08a"), Color("#7a1408"), Color("#ff6038")],
+	"D": [Color("#eef4ff"), Color("#ffffff"), Color("#9fb6ff"), Color("#dfe8ff")],
+}
+
+
+static func star_type(name: String, cls: String) -> String:
+	if STAR_TYPE.has(name):
+		return STAR_TYPE[name]
+	if cls == "t":
+		return "M"
+	return "K" if hash(name) % 2 == 0 else "G"
+
+
 ## ---------------------------------------------------------------- Outleap (scenario 100, Moves)
 ## sistema natale: popolazione e MLC per razza
 const OL_HOME := {"umani": [19, 54], "lcd": [17, 57], "rame": [20, 52], "altri": [18, 55]}

@@ -516,31 +516,52 @@ func _star_node(l: Vector3i, cls: String, name: String) -> Node3D:
 	n.position = Hex.world(l)
 	var size: float = {"h": 0.55, "s": 0.36, "t": 0.22}[cls]
 	var col := Color("#ffffff") if l.z > 0 else (Color("#ff5a8c") if l.z < 0 else Color("#ffb0cc"))
-	if style == "reborn":
-		# colore "stellare" deterministico secondo il nome
-		var hsh := absi(hash(name)) % 5
-		col = [Color("#fff4e0"), Color("#ffd8a0"), Color("#ffb070"), Color("#cfe0ff"), Color("#ff9070")][hsh]
 	var s := MeshInstance3D.new()
 	var sm := SphereMesh.new()
 	sm.radius = size
 	sm.height = size * 2
-	sm.radial_segments = 20
-	sm.rings = 10
+	sm.radial_segments = 32 if style == "reborn" else 20
+	sm.rings = 16 if style == "reborn" else 10
 	s.mesh = sm
-	var m := StandardMaterial3D.new()
-	m.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	m.albedo_color = col * (2.2 if style == "reborn" else 1.0)
-	s.material_override = m
+	if style == "reborn":
+		# superficie viva: granulazione, macchie e rotazione, col colore del tipo spettrale
+		var tp := D.star_type(name, cls)
+		var pal: Array = D.STAR_COLORS[tp]
+		col = pal[3]
+		var h := absi(hash(name))
+		var sh := ShaderMaterial.new()
+		sh.shader = _star_shader()
+		sh.set_shader_parameter("base_color", pal[0])
+		sh.set_shader_parameter("hot_color", pal[1])
+		sh.set_shader_parameter("cool_color", pal[2])
+		sh.set_shader_parameter("seed", float(h % 1000) / 1000.0)
+		sh.set_shader_parameter("spin", (0.08 + float(h % 7) * 0.025) * (1.0 if h % 2 == 0 else -1.0))
+		sh.set_shader_parameter("boil", 0.15 + float(h % 5) * 0.04 + (0.15 if tp == "M" else 0.0))
+		sh.set_shader_parameter("spots", {"A": 0.0, "F": 0.15, "G": 0.55, "K": 0.8, "M": 0.6, "D": 0.0}[tp])
+		sh.set_shader_parameter("energy", {"A": 1.15, "F": 1.1, "G": 1.0, "K": 1.0, "M": 1.0, "D": 1.2}[tp])
+		s.material_override = sh
+		# inclinazione dell'asse, diversa per ogni stella
+		s.rotation = Vector3(deg_to_rad(float(h % 40) - 20.0), 0, deg_to_rad(float((h / 40) % 30) - 15.0))
+		if tp == "D":
+			s.scale = Vector3.ONE * 0.7
+		elif tp == "A":
+			s.scale = Vector3.ONE * 1.2
+	else:
+		var m := StandardMaterial3D.new()
+		m.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		m.albedo_color = col
+		s.material_override = m
 	n.add_child(s)
 	if style == "reborn":
 		var halo := Sprite3D.new()
-		halo.texture = _glow_tex()
+		halo.texture = _corona_tex()
 		halo.billboard = BaseMaterial3D.BILLBOARD_ENABLED
-		halo.modulate = Color(col.r, col.g, col.b, 0.75)
-		halo.pixel_size = size * 0.05
+		halo.modulate = Color(col.r, col.g, col.b, 0.8)
+		halo.pixel_size = size * 0.05 * s.scale.x
 		halo.shaded = false
 		halo.transparent = true
 		halo.no_depth_test = false
+		halo.name = "corona"
 		n.add_child(halo)
 	# stelo fino al piano e piccolo anello sul piano
 	if l.z != 0:
@@ -581,6 +602,29 @@ func _star_node(l: Vector3i, cls: String, name: String) -> Node3D:
 
 
 static var _glow: Texture2D
+static var _corona: Texture2D
+static var _star_sh: Shader
+
+static func _star_shader() -> Shader:
+	if _star_sh == null:
+		_star_sh = load("res://assets/shaders/stella.gdshader")
+	return _star_sh
+
+
+## corona: trasparente sopra il disco della stella (che deve vedersi), luminosa appena fuori dal bordo
+static func _corona_tex() -> Texture2D:
+	if _corona != null:
+		return _corona
+	var img := Image.create(128, 128, false, Image.FORMAT_RGBA8)
+	for y in 128:
+		for x in 128:
+			var d := Vector2(x - 63.5, y - 63.5).length() / 64.0
+			var a := 0.0
+			if d > 0.27:
+				a = smoothstep(0.27, 0.33, d) * pow(clampf(1.0 - (d - 0.31) / 0.69, 0.0, 1.0), 2.2)
+			img.set_pixel(x, y, Color(1, 1, 1, a))
+	_corona = ImageTexture.create_from_image(img)
+	return _corona
 
 static func _glow_tex() -> Texture2D:
 	if _glow != null:
@@ -1252,12 +1296,21 @@ func build_tactical() -> void:
 	if eng.tac != null and eng.tac.star:
 		var st := MeshInstance3D.new()
 		var sm := SphereMesh.new()
-		sm.radius = 0.3
-		sm.height = 0.6
+		sm.radius = 0.55
+		sm.height = 1.1
+		sm.radial_segments = 32
+		sm.rings = 16
 		st.mesh = sm
-		var smt := StandardMaterial3D.new()
-		smt.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-		smt.albedo_color = Color("#ffe0a0") * 1.3
+		var stn: Dictionary = eng.star_at(eng.tac.l)
+		var tp := D.star_type(str(stn.get("name", "")), str(stn.get("cls", "t")))
+		var pal: Array = D.STAR_COLORS[tp]
+		var smt := ShaderMaterial.new()
+		smt.shader = _star_shader()
+		smt.set_shader_parameter("base_color", pal[0])
+		smt.set_shader_parameter("hot_color", pal[1])
+		smt.set_shader_parameter("cool_color", pal[2])
+		smt.set_shader_parameter("spin", 0.1)
+		smt.set_shader_parameter("spots", 0.6)
 		st.material_override = smt
 		st.position = Vector3(0, -TAC_SCALE, 0)
 		tac_root.add_child(st)
@@ -1265,7 +1318,9 @@ func build_tactical() -> void:
 		halo.texture = _glow_tex()
 		halo.billboard = BaseMaterial3D.BILLBOARD_ENABLED
 		halo.pixel_size = 0.04
-		halo.modulate = Color(1, 0.8, 0.4, 0.5)
+		halo.texture = _corona_tex()
+		halo.pixel_size = 0.55 * 6.4 / 128.0
+		halo.modulate = Color(pal[3], 0.8)
 		halo.position = st.position
 		tac_root.add_child(halo)
 	refresh_tac()
