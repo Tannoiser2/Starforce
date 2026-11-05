@@ -1,0 +1,10 @@
+{
+  "titolo": "StarForce",
+  "sottotitolo": "Alpha Centauri, conflitto interstellare in tre dimensioni",
+  "descrizione": "Il classico SPI del 1974 di Redmond Simonsen: flotte di TeleNavi che si spostano istantaneamente fra le stelle vicine al Sole, in un Volume tridimensionale con le StarGate da difendere. Piani segreti e simultanei, gioco base e avanzato sul Tactical Display, quindici scenari fra cui le incursioni degli Xenofobi e la missione di soccorso in solitario. Mappa 3D con grafica originale o Reborn, IA, partite online, salvataggi e replay.",
+  "online": true,
+  "sezione": "conversione",
+  "ordine": 195,
+  "bgg": 2524,
+  "generi": ["Fantascienza", "Wargame"]
+}
