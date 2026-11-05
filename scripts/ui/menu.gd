@@ -55,13 +55,9 @@ func _ready() -> void:
 	left.add_child(UI.title("StarForce", 86))
 	left.add_child(UI.head("ALPHA CENTAURI", 26, UI.YELLOW_L))
 	left.add_child(UI.label("Conflitto interstellare nel XXV secolo  |  SPI 1974, Redmond A. Simonsen", 18, UI.PINK_L))
-	var bt := UI.primary(UI.button("Prima volta? Tutorial guidato", 0, 56, 21))
-	bt.tooltip_text = "Una partita breve contro l'IA, spiegata passo per passo"
-	bt.pressed.connect(func():
-		_store()
-		main.start_game({"scenario": 1, "mode": "base", "tutorial": true,
-			"seats": [{"name": "", "ai": false, "level": 1}, {"name": "", "ai": true, "level": 1}],
-			"style": "reborn", "anim": 1.0, "ai_delay": 0.5, "seed": 2341}))
+	var bt := UI.primary(UI.button("Prima volta? Tutorial guidati", 0, 56, 21))
+	bt.tooltip_text = "Partite brevi contro l'IA, spiegate passo per passo"
+	bt.pressed.connect(_tutorial_panel)
 	left.add_child(bt)
 	left.add_child(UI.hsep())
 	var sc := ScrollContainer.new()
@@ -258,6 +254,30 @@ func _on_start() -> void:
 
 # ================================================================ caricamento
 
+func _tutorial_panel() -> void:
+	_store()
+	var Tut = preload("res://scripts/ui/tutorial.gd")
+	var p := _overlay()
+	var vb: VBoxContainer = p.get_meta("vb")
+	vb.add_child(UI.title("Tutorial guidati", 44))
+	vb.add_child(UI.wrap(UI.label("Partite vere contro l'IA: un riquadro ti spiega ogni passo e si accorge da solo quando hai fatto quello che chiede. Meglio farli in ordine.", 19), 760))
+	for l in Tut.LESSONS:
+		var n: int = l["n"]
+		var row := HBoxContainer.new()
+		row.add_theme_constant_override("separation", 16)
+		vb.add_child(row)
+		var b := UI.primary(UI.button("%d" % n, 64, 64, 28)) if n == 1 else UI.button("%d" % n, 64, 64, 28)
+		b.pressed.connect(func(): main.start_game(Tut.game_config(n)))
+		row.add_child(b)
+		var col := VBoxContainer.new()
+		col.add_child(UI.head(l["titolo"], 21, UI.YELLOW))
+		col.add_child(UI.wrap(UI.label(l["desc"], 17, UI.TEXT), 660))
+		row.add_child(col)
+	var bc := UI.button("Indietro", 200, 52, 20)
+	bc.pressed.connect(func(): p.queue_free())
+	vb.add_child(bc)
+
+
 func _load_panel() -> void:
 	_store()
 	var p := _overlay()
@@ -312,8 +332,11 @@ func _overlay() -> Control:
 	var box := PanelContainer.new()
 	box.add_theme_stylebox_override("panel", UI.panel_style(0.98))
 	box.set_anchors_preset(Control.PRESET_CENTER_TOP)
-	box.position = Vector2(size.x * 0.5 - 420, 120)
 	box.custom_minimum_size = Vector2(840, 0)
+	box.offset_left = -420
+	box.offset_right = 420
+	box.offset_top = 110
+	box.grow_horizontal = Control.GROW_DIRECTION_BOTH
 	p.add_child(box)
 	var vb := VBoxContainer.new()
 	vb.add_theme_constant_override("separation", 16)

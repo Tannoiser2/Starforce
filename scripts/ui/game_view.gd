@@ -105,9 +105,13 @@ func _ready() -> void:
 	eng.fx.connect(_on_fx)
 	eng.game_ended.connect(_on_end)
 	_focus_home()
-	if config.get("tutorial", false):
+	var tn = config.get("tutorial", 0)
+	if tn is bool:
+		tn = 1 if tn else 0
+	if int(tn) > 0:
 		var tut = preload("res://scripts/ui/tutorial.gd").new()
 		tut.g = self
+		tut.lesson = int(tn)
 		add_child(tut)
 	if online != null and online.role != "host":
 		online.heartbeat_loop()
