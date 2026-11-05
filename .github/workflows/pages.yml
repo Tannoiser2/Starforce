@@ -1,10 +1,13 @@
 # Costruisce la versione web del gioco con Godot e la pubblica sulla ludoteca privata (Cloudflare) e,
 # finché il repository è pubblico, anche su GitHub Pages.
-# Non parte da sola: si avvia quando si vuole pubblicare (Actions → Pubblica → Run workflow).
+# Non parte da sola: si avvia a mano (Actions, Pubblica, Run workflow) oppure con un commit su main
+# il cui messaggio contiene [pubblica].
 name: Pubblica
 
 on:
   workflow_dispatch:
+  push:
+    branches: [main]
 
 permissions:
   contents: read
@@ -17,6 +20,7 @@ concurrency:
 
 jobs:
   build:
+    if: ${{ github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[pubblica]') }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
