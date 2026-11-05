@@ -122,6 +122,18 @@ func _focus_home() -> void:
 # ================================================================ costruzione interfaccia
 
 func _build_ui() -> void:
+	# suggerimento per la telecamera, in basso al centro, sopra la mappa
+	var tip_t := "Mouse: trascina per ruotare, rotella per lo zoom, tasto destro (o Maiusc + trascina) per spostare la vista"
+	if DisplayServer.is_touchscreen_available():
+		tip_t = "Un dito: ruota  |  due dita: pizzica per lo zoom, trascina per spostare la vista"
+	var tip := UI.label(tip_t, 13, Color(0.9, 0.85, 0.95, 0.7))
+	tip.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	tip.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	tip.set_anchors_and_offsets_preset(Control.PRESET_CENTER_BOTTOM)
+	tip.grow_horizontal = Control.GROW_DIRECTION_BOTH
+	tip.offset_top = -170
+	tip.offset_bottom = -150
+	add_child(tip)
 	# barra in alto
 	var top := PanelContainer.new()
 	top.add_theme_stylebox_override("panel", UI.box(Color(0.05, 0.02, 0.02, 0.88), UI.PINK_D, 0, 0, 8))

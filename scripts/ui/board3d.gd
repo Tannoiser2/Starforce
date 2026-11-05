@@ -222,6 +222,12 @@ func _unhandled_input(ev: InputEvent) -> void:
 		var d1: float = ev.position.distance_to(other)
 		if d0 > 1.0:
 			dist = clampf(dist * d0 / maxf(d1, 1.0), 6.0, 140.0)
+		# due dita che scorrono insieme spostano la vista (metà del movimento: il punto medio)
+		var right := cam.global_transform.basis.x
+		var fwd := Vector3(-sin(yaw), 0, -cos(yaw))
+		var rel: Vector2 = (ev.position - old) * 0.5
+		target_goal += (-right * rel.x + fwd * rel.y) * dist * 0.0016
+		target_goal.y = 0.0
 		_touches[ev.index] = ev.position
 		get_viewport().set_input_as_handled()
 		return

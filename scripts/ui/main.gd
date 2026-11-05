@@ -18,6 +18,8 @@ func get_net() -> Net:
 func _ready() -> void:
 	theme = UI.make_theme()
 	set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	# la radice non deve catturare il mouse, altrimenti trascinare sulla mappa 3D non arriva alla telecamera
+	mouse_filter = Control.MOUSE_FILTER_IGNORE
 	stars = UI.Starfield.new()
 	add_child(stars)
 	show_menu()
