@@ -459,6 +459,8 @@ func _begin_request() -> void:
 			_start_tplot()
 		"xsign":
 			_ask_xsign()
+		"reserve":
+			_reserve_panel()
 		_:
 			_provide(null)
 
@@ -590,6 +592,29 @@ func _plot_panel() -> void:
 			plot[sel] = {"c": "E", "to": u["lz"]}
 			_plot_changed())
 		r2.add_child(be)
+		# regole opzionali
+		var r3 := _row()
+		if eng.faker_left(seat) > 0 and not u.get("ff", false) and not eng.neutralized(u):
+			var bf := UI.button("Dividi in FakerForce", 0, 40, 15)
+			bf.tooltip_text = "La StarForce resta ferma e diventa quattro FakerForce di una sola TeleNave: il nemico le vede come quattro StarForce. Ne puoi dividere ancora %d." % eng.faker_left(seat)
+			bf.pressed.connect(func():
+				plot[sel] = {"c": "F", "to": u["lz"]}
+				_plot_changed())
+			r3.add_child(bf)
+		if u.get("ff", false) and eng.faker_group(seat, u["lz"]).size() >= 4 and scn_id_allows_join():
+			var bj := UI.button("Riunisci in una StarForce", 0, 40, 15)
+			bj.tooltip_text = "Le quattro FakerForce in questa LiteZulu tornano una StarForce alla fine degli spostamenti, se nessun nemico arriva."
+			bj.pressed.connect(func():
+				plot[sel] = {"c": "J", "to": u["lz"]}
+				_plot_changed())
+			r3.add_child(bj)
+		if eng.reserve_max(seat) > 0 and not u.get("ff", false) and not eng.neutralized(u) and int(u.get("res_lock", -1)) != eng.turn:
+			var br := UI.button("In riserva", 0, 40, 15)
+			br.tooltip_text = "La StarForce resta ferma; dopo gli spostamenti puoi mandarla in una LiteZulu contesa, dove arriva dal secondo segmento (o dal terzo Tac-turno). Il turno dopo non potrà spostarsi. Al massimo %d per turno." % eng.reserve_max(seat)
+			br.pressed.connect(func():
+				plot[sel] = {"c": "Rs", "to": u["lz"]}
+				_plot_changed())
+			r3.add_child(br)
 		if eng.scn_id == 38:
 			var bload := UI.button("Carica / scarica", 160, 42, 16)
 			bload.pressed.connect(func():
@@ -611,14 +636,28 @@ func _plot_panel() -> void:
 	rb.add_child(bai)
 
 
+func scn_id_allows_join() -> bool:
+	return eng.scn_id != 16
+
+
 func _plot_line_text(u: Dictionary) -> String:
 	var id: String = u["id"]
-	var t := "%s  %s" % [u["label"], Hex.fmt(u["lz"])]
+	var t := "%s%s  %s" % [u["label"], " (Faker)" if u.get("ff", false) else "", Hex.fmt(u["lz"])]
+	if eng.fatigue(u) >= 2:
+		t += "  affaticata"
 	if eng.neutralized(u):
 		return t + "  (neutralizzata)"
+	if int(u.get("res_lock", -1)) == eng.turn:
+		return t + "  ferma (era in riserva)"
 	if not plot.has(id):
 		return t + "  resta"
 	var o: Dictionary = plot[id]
+	if o.get("c", "") == "F":
+		return t + "  si divide in FakerForce"
+	if o.get("c", "") == "J":
+		return t + "  riunisce le FakerForce"
+	if o.get("c", "") == "Rs":
+		return t + "  in riserva"
 	if o.get("c", "") == "E":
 		return t + "  rinforza"
 	if o.get("c", "") == "L":
@@ -633,10 +672,10 @@ func _plot_detail(id: String) -> String:
 	var u: Dictionary = eng.units[id]
 	if eng.neutralized(u):
 		return "Neutralizzata: in questo turno non può spostarsi."
-	if not plot.has(id) or plot[id].get("c", "") in ["E", "L"]:
+	if not plot.has(id) or plot[id].get("c", "") in ["E", "L", "F", "J", "Rs"]:
 		return "Clicca la destinazione sulla mappa."
 	var r: Dictionary = eng.resolve_plot(seat, plot).get(id, {})
-	var codes := {"S": "spostamento normale (portata 5)", "ES": "verso una LiteZulu rinforzata (portata 10)", "GS": "con l'aiuto della StarGate di partenza (portata 10)", "EGS": "StarGate di partenza e rinforzo all'arrivo (portata 15)", "GGS": "da StarGate a StarGate (portata 20)"}
+	var codes := {"S": "spostamento normale (portata 5)", "ES": "verso una LiteZulu rinforzata (portata 10)", "GS": "con l'aiuto della StarGate di partenza (portata 10)", "EGS": "StarGate di partenza e rinforzo all'arrivo (portata 15)", "GGS": "da StarGate a StarGate (portata 20)", "GL": "GateLink: catena di StarGate amiche, sicuro"}
 	var t := "Destinazione %s: %d Lite effettivi.\n%s" % [Hex.fmt(r["to"]), int(r["d"]), codes.get(r["c"], "")]
 	if int(r["col"]) == 0:
 		t += "\nArrivo sicuro."
@@ -1106,7 +1145,9 @@ func _sf_editor(id: String) -> void:
 	if not c["ok"]:
 		_note(str(c["err"]), UI.RED, 15)
 	for ph in ["a1", "a2"]:
-		var opts: Array = SF_A1 if ph == "a1" else SF_A2
+		var opts: Array = (SF_A1 if ph == "a1" else SF_A2).duplicate()
+		if ph == "a1" and t.can_trigger(seat):
+			opts.append(["N", "Innesca la nova"])
 		var r := _row()
 		r.add_child(UI.label("Fase %s:" % ph.substr(1), 17))
 		var ob := OptionButton.new()
@@ -1127,6 +1168,9 @@ func _sf_editor(id: String) -> void:
 				"B":
 					var bo: Array = eng.breakoff_options(eng.units[id])
 					tplan[id][ph] = {"k": "B", "to": bo[0] if not bo.is_empty() else eng.units[id]["lz"]}
+				"N":
+					tplan[id]["a1"] = {"k": "N"}
+					tplan[id]["a2"] = {"k": ""}
 				_:
 					tplan[id][ph] = {"k": k}
 			_tplot_panel())
@@ -1253,6 +1297,37 @@ func _tac_preview() -> void:
 			if str(p["a1"].get("k", "")) != "T" and str(p["a2"].get("k", "")) != "T":
 				board.set_tac_cursor(null)
 	board.show_casts(casts)
+
+
+# ---------------------------------------------------------------- riserve (32.0)
+
+var res_sel := {}
+
+func _reserve_panel() -> void:
+	res_sel = {}
+	_panel("Le tue riserve")
+	_note("Gli spostamenti sono fatti e si sa dove si combatte. Scegli dove mandare ogni StarForce in riserva: arriverà dal secondo segmento (o dal terzo Tac-turno), in modo stellare.", UI.MUTED, 15)
+	var opts: Dictionary = req.get("opts", {})
+	for id in opts:
+		var u: Dictionary = eng.units[id]
+		var r := _row()
+		r.add_child(UI.label("%s  %s" % [u["label"], Hex.fmt(u["lz"])], 17))
+		var ob := OptionButton.new()
+		ob.add_item("resta in attesa")
+		var lst: Array = opts[id]
+		for l in lst:
+			var rc: Dictionary = eng.reserve_reach(u, l)
+			var nm: String = eng.star_at(l).get("name", "")
+			ob.add_item("%s%s  (%d Lite, %s)" % [Hex.fmt(l), (" " + nm) if nm != "" else "", int(rc["d"]), eng.col_name(int(rc["col"]))])
+		ob.item_selected.connect(func(i):
+			if i == 0:
+				res_sel.erase(id)
+			else:
+				res_sel[id] = lst[i - 1])
+		r.add_child(ob)
+	var bok := UI.primary(UI.button("Conferma", 250, 52, 20))
+	bok.pressed.connect(func(): _provide(res_sel.duplicate()))
+	act_box.add_child(bok)
 
 
 # ---------------------------------------------------------------- Xenofobi

@@ -4,7 +4,7 @@ extends SceneTree
 
 func _init() -> void:
 	var args := OS.get_cmdline_user_args()
-	var scns := [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 38]
+	var scns := [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 21, 12, 13, 14, 15, 16, 17, 18, 19, 20, 38]
 	var modes := ["base", "modificato", "avanzato"]
 	var seeds := [1, 2]
 	if args.size() >= 1:
@@ -21,11 +21,16 @@ func _init() -> void:
 				e.headless = true
 				e.ai_delay = 0.0
 				e.anim = 0.0
-				var n: int = 3 if s in [11, 12] else (1 if s == 38 else 2)
+				var n: int = SFEngine.D.scenario(s)["lati"].size()
 				var seats := []
 				for i in n:
 					seats.append({"name": "IA", "ai": true, "level": 1})
-				e.setup({"scenario": s, "mode": m, "seed": sd, "seats": seats, "max_turns": 40})
+				var opz := {}
+				if OS.get_environment("OPZ") != "":
+					for k in SFEngine.D.OPTIONS:
+						if OS.get_environment("OPZ") == "all" or k in OS.get_environment("OPZ").split(","):
+							opz[k] = true
+				e.setup({"scenario": s, "mode": m, "seed": sd, "seats": seats, "max_turns": 40, "opzioni": opz})
 				root.add_child(e)
 				var t0 := Time.get_ticks_msec()
 				await e.run()

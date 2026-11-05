@@ -81,6 +81,18 @@ var pregame := 0
 # missione di soccorso
 var rescue := {}
 
+# regole opzionali (32.0-36.0)
+var opt := {}                     # chiave -> true
+var turn_hook = null              # prove: chiamata alla fine di ogni turno
+var star_list: Array = []         # stelle in gioco: quelle della mappa più quelle dello scenario
+var extended := false             # Volume esteso di dieci Lite in altezza (scenari 17-19)
+var inactive := {}                # lati inattivi (scenario 19: Lega; scenario 21: Lega Umana)
+var politics := {}                # scenario 21: punti politici, sacchetto, salto della pesca
+var outer_sign := 1               # lato del Volume dei sistemi esterni (scenari 17-19)
+var s16_hold := {}                # scenario 16: turni consecutivi con otto sistemi terziari
+var prolonged := {}               # LiteZulu con un combattimento che prosegue (35.0)
+var reserves := {}                # uid -> LiteZulu contesa a cui la riserva è destinata (32.0)
+
 # visibilità: per lato, unità nemiche di cui si conosce la zulu in questo turno
 var seen_z := []
 # registro delle decisioni (salvataggi) e decisioni da rigiocare al caricamento
@@ -95,8 +107,8 @@ func setup(cfg: Dictionary) -> void:
 	scn_id = int(cfg.get("scenario", 1))
 	sc = D.scenario(scn_id)
 	mode = str(cfg.get("mode", sc.get("formato", "avanzato")))
-	if sc.has("xeno") and mode == "avanzato":
-		mode = "modificato"
+	if sc.has("formati") and not mode in sc["formati"]:
+		mode = sc["formati"][0]
 	if cfg.has("seed"):
 		rng.seed = int(cfg["seed"])
 	else:
@@ -108,26 +120,56 @@ func setup(cfg: Dictionary) -> void:
 	players = cfg.get("seats", [])
 	while players.size() < nsides:
 		players.append({"name": "", "ai": players.size() > 0, "level": 1})
+	extended = bool(sc.get("esteso", false))
 	for st in D.STARS:
-		var h := int(st[0])
-		var l := Hex.lz(h, int(st[1]))
-		if not stars.has(h):
-			stars[h] = []
-		stars[h].append({"z": int(st[1]), "cls": st[2], "name": st[3]})
-		star_lz[l] = {"cls": st[2], "name": st[3], "hex": h}
+		add_star(int(st[0]), int(st[1]), st[2], st[3])
+	for st in sc.get("stelle_extra", []):
+		add_star(int(st[0]), int(st[1]), st[2], st[3])
 	for i in nsides:
 		var sd: Dictionary = sc["lati"][i]
 		var casa: Array = []
 		for c in sd.get("casa", []):
 			casa.append(int(c))
-		sides.append({"nome": sd["nome"], "razza": sd["razza"], "set": sd["set"], "casa": casa, "perso": false, "next_letter": 0, "next_gate": 0})
+		sides.append({"nome": sd["nome"], "razza": sd["razza"], "set": sd["set"], "casa": casa, "perso": bool(sd.get("neutrale", false)), "next_letter": 0, "next_gate": 0})
+		if sd.get("inattivo", false):
+			inactive[i] = true
 		gates_lost.append(0)
 		vp.append(0)
 		seen_z.append({})
 	xeno = int(sc.get("xeno", 0))
+	for k in cfg.get("opzioni", {}):
+		if cfg["opzioni"][k]:
+			opt[k] = true
+	for k in sc.get("opzioni", []):
+		opt[k] = true
 	_place_forces()
 	for i in nsides:
 		ais.append(SFAI.new(int(players[i].get("level", 1))))
+
+
+func add_star(h: int, z: int, cls: String, name: String, extra := {}) -> void:
+	var l := Hex.lz(h, z)
+	if not stars.has(h):
+		stars[h] = []
+	stars[h].append({"z": z, "cls": cls, "name": name})
+	var e := {"cls": cls, "name": name, "hex": h}
+	e.merge(extra)
+	star_lz[l] = e
+	star_list.append(["%04d" % h, z, cls, name])
+
+
+func has_opt(k: String) -> bool:
+	return opt.has(k)
+
+
+## peso di un'unità per capacità delle StarGate, rinforzi e perdite: una FakerForce vale un quarto
+func weight(u: Dictionary) -> float:
+	return 0.25 if u.get("ff", false) else 1.0
+
+
+## turni consecutivi in modo battaglia (36.0): 2 = affaticata, 3 = esausta
+func fatigue(u: Dictionary) -> int:
+	return int(u.get("bm", 0)) if has_opt("fatica") else 0
 
 
 func pname(s: int) -> String:
@@ -205,7 +247,7 @@ func _place_forces() -> void:
 				u["entered"] = true
 		if sd.has("tutti_i_sistemi"):
 			var excl: Array = sd.get("esclusi", [])
-			for st in D.STARS:
+			for st in star_list:
 				if st[0] in excl:
 					continue
 				add_unit(i, "gate", Hex.lz(int(st[0]), int(st[1])))
@@ -217,9 +259,14 @@ func _place_forces() -> void:
 					h = 2020
 				add_unit(i, "sf", star_hex_lz(h))
 			reinf_left = int(sd.get("rinforzi", 0))
-			sides[i]["casa"] = [2020, 2326, 2036]
+			sides[i]["casa"] = sc.get("case_lega", [2020, 2326, 2036]).duplicate()
 		if sd.has("xeno_porte"):
 			xeno_side = i
+	_outer_systems()
+	if sc.get("tutte_faker", false):
+		for u in live(-1, "sf"):
+			if not u.get("ff", false):
+				_split_join([u], [])
 	for i in sides.size():
 		var cnt := 0
 		for id in order:
@@ -233,6 +280,99 @@ func _place_forces() -> void:
 				if u["side"] == i and u["kind"] == "gate":
 					sides[i]["casa"] = [Hex.hexof(u["lz"])]
 					break
+
+
+## sistemi esterni casuali (scenari 17-19), piazzati come le StarGate xenofobe (31.1): due chit per
+## l'esagono, due Lite oltre il limite Zulu, tutti dalla stessa parte del Volume
+func _outer_systems() -> void:
+	var lati: Array = sc["lati"]
+	var any := false
+	for sd in lati:
+		if sd.has("casuali") or sd.has("casuali_propri") or sd.has("casuali_vicino"):
+			any = true
+	if not any:
+		return
+	outer_sign = 1 if rng.randi_range(0, 1) == 0 else -1
+	var psl_outer := []
+	var taken := {}
+	var n_sys := 0
+	# prima i sistemi esterni della Lega (e, nello scenario 19, quelli dell'ex Unione)
+	for i in lati.size():
+		var sd: Dictionary = lati[i]
+		for key in ["casuali", "casuali_extra", "casuali_propri"]:
+			var n := int(sd.get(key, 0))
+			var sign := outer_sign
+			if key in ["casuali_propri", "casuali_extra"]:
+				sign = -outer_sign      # l'Unione sta dalla parte opposta ai RxPexy (44.2)
+			for k in n:
+				var h := _random_hex(taken)
+				n_sys += 1
+				var nm := ("Colonia %d" % n_sys) if key != "casuali_propri" else ("Unione %d" % (k + 1))
+				if key == "casuali_extra":
+					nm = "Unione %d" % (k + 1)
+				var l := _outer_star(h, sign, nm)
+				add_unit(i, "gate", l)
+				if key == "casuali":
+					psl_outer.append(h)
+				else:
+					_spread_sf(i, int(sd.get("sf_casuali", 0)), l, k, n)
+	# poi i RxPexy, entro sei esagoni dai sistemi esterni della Lega
+	for i in lati.size():
+		var sd: Dictionary = lati[i]
+		var n := int(sd.get("casuali_vicino", 0))
+		if n <= 0:
+			continue
+		var made := []
+		var guard := 0
+		while made.size() < n and guard < 500:
+			guard += 1
+			var base: int = psl_outer[rng.randi_range(0, psl_outer.size() - 1)] if not psl_outer.is_empty() else 2020
+			var cand := []
+			for h in Hex.all_hexes():
+				if Hex.pdist(h, base) <= 6 and not taken.has(h):
+					cand.append(h)
+			if cand.is_empty():
+				continue
+			var h2: int = cand[rng.randi_range(0, cand.size() - 1)]
+			taken[h2] = true
+			var l2 := _outer_star(h2, outer_sign, "RxPexy %d" % (made.size() + 1))
+			add_unit(i, "gate", l2)
+			made.append(l2)
+		var nsf := int(sd.get("sf_casuali", 0))
+		for k in nsf:
+			var u := add_unit(i, "sf", made[k % made.size()])
+			if sd.get("tachioni", false):
+				u["tachyon"] = true
+		sides[i]["casa"] = made.map(func(x): return Hex.hexof(x))
+
+
+func _random_hex(taken: Dictionary) -> int:
+	var ch := D.stellar_chits()
+	while true:
+		var a: Array = ch[rng.randi_range(0, ch.size() - 1)]
+		var b: Array = ch[rng.randi_range(0, ch.size() - 1)]
+		if a[0] in ["Dstr", "Brkf"] or b[0] in ["Dstr", "Brkf"]:
+			continue
+		var h := int(a[0] + b[0])
+		if not Hex.on_map(h):
+			h = Hex.hexof(Hex.clamp_random(h, 0))
+		if taken.has(h):
+			continue
+		taken[h] = true
+		return h
+	return 2020
+
+
+func _outer_star(h: int, sign: int, name: String) -> Vector3i:
+	var z := sign * (Hex.zlimit(h) + 2)
+	add_star(h, z, "s", name, {"casuale": true})
+	return Hex.lz(h, z)
+
+
+func _spread_sf(side: int, total: int, l: Vector3i, k: int, n: int) -> void:
+	var per := total / n + (1 if k < total % n else 0)
+	for j in per:
+		add_unit(side, "sf", l)
 
 
 func _system(side: int, spec: Array) -> void:
@@ -260,11 +400,19 @@ func neutralized(u: Dictionary) -> bool:
 
 
 func gate_active(u: Dictionary) -> bool:
-	return u["kind"] == "gate" and u["st"] == "on" and not neutralized(u)
+	return u["kind"] == "gate" and u["st"] == "on" and not neutralized(u) and not inactive.has(u["side"])
 
 
 func hostile(a: int, b: int) -> bool:
-	return a != b
+	if a == b or a < 0 or b < 0:
+		return false
+	if inactive.has(a) or inactive.has(b):
+		return false
+	for p in sc.get("pace", []):
+		if (int(p[0]) == a and int(p[1]) == b) or (int(p[0]) == b and int(p[1]) == a):
+			if turn < int(p[2]):
+				return false
+	return true
 
 
 func live(side := -1, kind := "") -> Array:
@@ -306,7 +454,7 @@ func sides_at(l: Vector3i) -> Array:
 
 
 func valid_lz(l: Vector3i) -> bool:
-	if xeno > 0:
+	if xeno > 0 or extended:
 		var h := Hex.hexof(l)
 		return Hex.on_map(h) and absi(l.z) <= Hex.zlimit(h) + 10
 	return Hex.valid(l)
@@ -427,6 +575,10 @@ func run() -> void:
 		await _xeno_setup()
 	if scn_id == 38:
 		_rescue_setup()
+	if scn_id == 20:
+		await _carthage()
+		_finish()
+		return
 	_rec({"k": "start"})
 	turn = 0
 	# spostamenti liberi prima del primo turno (scenari 2, 3, 9) e combattimento iniziale (scenario 5)
@@ -488,9 +640,16 @@ func _turn_start() -> void:
 	for u in live():
 		u["start"] = u["lz"]
 		u.erase("entered")
+		# equipaggi esausti dopo tre turni in modo battaglia (36.2)
+		if u["kind"] == "sf" and fatigue(u) >= 3:
+			_neutralize(u, turn)
+			u["bm"] = 0
+			log_msg("%s ha l'equipaggio esausto: resta neutralizzata in questo turno." % uname(u))
 	# Xenofobi: rinforzi della Lega nei turni pari e ritorno degli Xenofobi randomizzati
 	if xeno > 0:
 		_xeno_turn_start()
+	if sc.has("politica"):
+		_politics_join()
 	if scn_id == 7 and first_neut >= 0 and not sc.has("_lcd_done"):
 		pass
 
@@ -506,6 +665,8 @@ func _stellar_turn(who: Array) -> void:
 	for s in who:
 		if sides[s]["perso"] and scn_id != 11:
 			continue
+		if inactive.has(s):
+			continue
 		if live(s, "sf").is_empty():
 			continue
 		seats.append(s)
@@ -517,11 +678,19 @@ func _stellar_turn(who: Array) -> void:
 			plots[seats[i]] = rr[i] if rr[i] is Dictionary else {}
 	if abort:
 		return
+	if sc.has("politica") and turn > 0:
+		_politics_draw()
 	phase = "shift"
 	await _execute_shifts(plots)
 	if over or abort:
 		return
 	_compute_visibility()
+	contested = {}
+	for l in _find_contested():
+		contested[l] = true
+	_reveal_fakers()
+	if has_opt("riserve"):
+		await _assign_reserves()
 	await _combat_phase()
 	if over or abort:
 		return
@@ -535,6 +704,7 @@ func resolve_plot(side: int, plot: Dictionary) -> Dictionary:
 	var out := {}
 	var used := gate_used.duplicate(true)
 	var enh_free := {}          # LiteZulu -> [uid rinforzi disponibili]
+	var enh_cap := {}           # uid rinforzo -> capacità residua (1 StarForce = 4 FakerForce)
 	for id in plot:
 		if not units.has(id):
 			continue
@@ -542,11 +712,15 @@ func resolve_plot(side: int, plot: Dictionary) -> Dictionary:
 		if u["side"] != side or u["kind"] != "sf" or u["st"] != "on":
 			continue
 		var o: Dictionary = plot[id]
-		if str(o.get("c", "")) == "E" and not neutralized(u):
-			if not enh_free.has(u["lz"]):
-				enh_free[u["lz"]] = []
-			enh_free[u["lz"]].append(id)
-			out[id] = {"c": "E", "from": u["lz"], "to": u["lz"], "d": 0, "safe": true, "col": 0, "err": ""}
+		var c := str(o.get("c", ""))
+		if c in ["E", "F", "J", "Rs"]:
+			if c == "E" and not neutralized(u):
+				if not enh_free.has(u["lz"]):
+					enh_free[u["lz"]] = []
+				enh_free[u["lz"]].append(id)
+				enh_cap[id] = weight(u)
+			out[id] = {"c": c, "from": u["lz"], "to": u["lz"], "d": 0, "safe": true, "col": 0, "err": ""}
+	used["_enh_cap"] = enh_cap
 	var ids := plot.keys()
 	ids.sort()
 	# prima le richieste esplicite (codice indicato), poi le altre
@@ -558,7 +732,7 @@ func resolve_plot(side: int, plot: Dictionary) -> Dictionary:
 		var o: Dictionary = plot[id]
 		if not o.has("to"):
 			continue
-		if str(o.get("c", "")) in ["S", "ES", "GS", "EGS", "GGS"]:
+		if str(o.get("c", "")) in ["S", "ES", "GS", "EGS", "GGS", "GL"]:
 			explicit.append(id)
 		else:
 			auto.append(id)
@@ -571,6 +745,9 @@ func resolve_plot(side: int, plot: Dictionary) -> Dictionary:
 		if to is Array:
 			to = Vector3i(int(to[0]), int(to[1]), int(to[2]))
 		if not (to is Vector3i):
+			continue
+		if int(u.get("res_lock", -1)) == turn and to != u["lz"]:
+			out[id] = {"c": "", "from": u["lz"], "to": u["lz"], "d": 0, "safe": true, "col": 0, "err": "è stata in riserva il turno scorso: in questo turno non può spostarsi", "via": []}
 			continue
 		var r := _shift_option(u, to, str(o.get("c", "")), used, enh_free)
 		out[id] = r
@@ -603,7 +780,21 @@ func _shift_option(u: Dictionary, to: Vector3i, want: String, used: Dictionary, 
 		res["c"] = ""
 		res["to"] = from
 		return res
+	if not _can_enter(u, to):
+		res["err"] = "non può entrare in quella LiteZulu"
+		res["c"] = ""
+		res["to"] = from
+		return res
+	var w := weight(u)
 	var dist := Hex.tdist(from, to)
+	if u.get("tachyon", false):
+		# incrociatori a tachioni: due Lite per turno, senza StarGate né rischi (45.4)
+		res["d"] = dist
+		if dist > 2:
+			res["err"] = "un incrociatore a tachioni si muove al massimo di due Lite per turno"
+			res["c"] = ""
+			res["to"] = from
+		return res
 	var add := 0
 	var auto_safe := false
 	if xeno == 0:
@@ -614,23 +805,35 @@ func _shift_option(u: Dictionary, to: Vector3i, want: String, used: Dictionary, 
 					auto_safe = true
 	var d := dist + add
 	res["d"] = d
-	# risorse disponibili
+	# risorse disponibili (le StarGate impegnate in un combattimento che prosegue non aiutano: 35.6)
 	var og := gate_at(from, u["side"])
 	var origin_gate := {}
-	if not og.is_empty() and gate_active(og):
+	if not og.is_empty() and gate_active(og) and not prolonged.has(og["lz"]):
 		origin_gate = og
 	var dg := gate_at(to, u["side"])
 	var dest_gate := {}
-	if not dg.is_empty() and gate_active(dg) and _same_race_ok(u, dg):
+	if not dg.is_empty() and gate_active(dg) and _same_race_ok(u, dg) and not prolonged.has(dg["lz"]):
 		dest_gate = dg
+	var enh_cap: Dictionary = used.get("_enh_cap", {})
 	var enh := ""
 	for e in enh_free.get(to, []):
-		if _same_race_ok(u, units[e]):
-			enh = e
-			break
+		if not _same_race_ok(u, units[e]):
+			continue
+		# una FakerForce rinforza solo un'altra FakerForce (33.12)
+		if units[e].get("ff", false) and not u.get("ff", false):
+			continue
+		if float(enh_cap.get(e, 1.0)) + 0.001 < w:
+			continue
+		enh = e
+		break
 	var opts := []
+	var link: Array = []
 	if not origin_gate.is_empty() and not dest_gate.is_empty() and (origin_gate["race"] == dest_gate["race"] or not _race_rules()):
 		opts.append("GGS")
+		if has_opt("gatelink"):
+			link = _gatelink_path(origin_gate, dest_gate, used, w, from, to)
+			if link.size() >= 3:
+				opts.append("GL")
 	if not origin_gate.is_empty() and enh != "":
 		opts.append("EGS")
 	if not origin_gate.is_empty():
@@ -647,7 +850,11 @@ func _shift_option(u: Dictionary, to: Vector3i, want: String, used: Dictionary, 
 	for c in opts:
 		if not _can_use(c, u, from, to, origin_gate, dest_gate, used):
 			continue
-		var col := shift_column(c, d, from, to, u["side"])
+		var col := 0
+		if c == "GL":
+			col = 0
+		else:
+			col = shift_column(c, d + _fatigue_add(u, c, enh), from, to, u["side"])
 		if auto_safe:
 			col = 0
 		if col < best_col:
@@ -657,63 +864,129 @@ func _shift_option(u: Dictionary, to: Vector3i, want: String, used: Dictionary, 
 			break
 	if best == "":
 		best = "S"
-		best_col = 0 if auto_safe else shift_column("S", d, from, to, u["side"])
+		best_col = 0 if auto_safe else shift_column("S", d + _fatigue_add(u, "S", ""), from, to, u["side"])
 	res["c"] = best
 	res["col"] = best_col
 	res["safe"] = best_col == 0
 	# prenotazione delle risorse
 	match best:
+		"GL":
+			for g in link:
+				_use_gate(used, g["id"], "GL", from, to, w)
+			res["via"] = link.map(func(g): return g["id"])
 		"GGS":
-			_use_gate(used, origin_gate["id"], best, from, to)
-			_use_gate(used, dest_gate["id"], "in", from, to)
+			_use_gate(used, origin_gate["id"], best, from, to, w)
+			_use_gate(used, dest_gate["id"], "in", from, to, w)
 			res["via"] = [origin_gate["id"], dest_gate["id"]]
 		"EGS":
-			_use_gate(used, origin_gate["id"], best, from, to)
-			enh_free[to].erase(enh)
+			_use_gate(used, origin_gate["id"], best, from, to, w)
+			_take_enh(enh_free, enh_cap, to, enh, w)
 			res["via"] = [origin_gate["id"], enh]
 		"GS":
-			_use_gate(used, origin_gate["id"], best, from, to)
+			_use_gate(used, origin_gate["id"], best, from, to, w)
 			res["via"] = [origin_gate["id"]]
 		"ES":
 			if enh != "":
-				enh_free[to].erase(enh)
+				_take_enh(enh_free, enh_cap, to, enh, w)
 				res["via"] = [enh]
 			else:
-				_use_gate(used, dest_gate["id"], "in", from, to)
+				_use_gate(used, dest_gate["id"], "in", from, to, w)
 				res["via"] = [dest_gate["id"]]
 	return res
 
 
+func _take_enh(enh_free: Dictionary, enh_cap: Dictionary, to: Vector3i, enh: String, w: float) -> void:
+	var left := float(enh_cap.get(enh, 1.0)) - w
+	enh_cap[enh] = left
+	if left < 0.249:
+		enh_free[to].erase(enh)
+
+
+## Lite in più per gli equipaggi affaticati (36.1 A): non per GS e GGS, dove sposta la StarGate
+func _fatigue_add(u: Dictionary, c: String, enh: String) -> int:
+	if not has_opt("fatica") or c in ["GS", "GGS", "GL"]:
+		return 0
+	var add := 0
+	if fatigue(u) >= 2:
+		add = 2
+	if enh != "" and c in ["ES", "EGS"] and units.has(enh) and fatigue(units[enh]) >= 2:
+		add = 2
+	return add
+
+
+## GateLink (34.0): catena lineare di StarGate amiche della stessa razza, ognuna entro 20 Lite dalla
+## successiva, tutte con capacità libera; la più corta (in numero di StarGate) fra partenza e arrivo
+func _gatelink_path(a: Dictionary, b: Dictionary, used: Dictionary, w: float, from: Vector3i, to: Vector3i) -> Array:
+	var gates := []
+	for g in live(a["side"], "gate"):
+		if gate_active(g) and g["race"] == a["race"] and not prolonged.has(g["lz"]):
+			if _gate_free(used, g["id"], "GL", from, to, w):
+				gates.append(g)
+	var prev := {a["id"]: ""}
+	var queue := [a]
+	while not queue.is_empty():
+		var cur: Dictionary = queue.pop_front()
+		if cur["id"] == b["id"]:
+			break
+		for g in gates:
+			if prev.has(g["id"]):
+				continue
+			var lim := 20
+			if xeno > 0 and a["side"] == xeno_side:
+				lim = 999      # 34.32: gli Xenofobi collegano le loro StarGate a qualunque distanza
+			if Hex.tdist(cur["lz"], g["lz"]) <= lim:
+				prev[g["id"]] = cur["id"]
+				queue.append(g)
+	if not prev.has(b["id"]):
+		return []
+	var path := []
+	var k: String = b["id"]
+	while k != "":
+		path.push_front(units[k])
+		k = prev[k]
+	return path
+
+
+## dove una StarForce non può entrare (scenario 16: le FakerForce non assaltano le StarGate)
+func _can_enter(u: Dictionary, to: Vector3i) -> bool:
+	if scn_id == 16 and u.get("ff", false):
+		for g in units_at(to):
+			if g["kind"] == "gate" and g["side"] >= 0 and hostile(g["side"], u["side"]) and gate_active(g):
+				return false
+	return true
+
+
 func _can_use(c: String, u: Dictionary, from: Vector3i, to: Vector3i, og: Dictionary, dg: Dictionary, used: Dictionary) -> bool:
+	var w := weight(u)
 	match c:
 		"GGS":
-			return _gate_free(used, og["id"], c, from, to) and _gate_free(used, dg["id"], "in", from, to)
+			return _gate_free(used, og["id"], c, from, to, w) and _gate_free(used, dg["id"], "in", from, to, w)
 		"EGS", "GS":
-			return _gate_free(used, og["id"], c, from, to)
+			return _gate_free(used, og["id"], c, from, to, w)
 		"ES":
-			# con un rinforzo libero non serve la porta
-			return true if dg.is_empty() else true
+			return true
 	return true
 
 
 ## capacità della StarGate [7.24-7.25]: due usi qualunque, oppure fino a quattro se tutti fanno
-## esattamente lo stesso spostamento
-func _gate_free(used: Dictionary, gid: String, kind: String, from: Vector3i, to: Vector3i) -> bool:
+## esattamente lo stesso spostamento; una FakerForce pesa un quarto (33.1)
+func _gate_free(used: Dictionary, gid: String, kind: String, from: Vector3i, to: Vector3i, w := 1.0) -> bool:
 	var lst: Array = used.get(gid, [])
-	if lst.size() < 2:
-		return true
-	if lst.size() >= 4:
-		return false
+	var tot := 0.0
+	var same := true
 	for e in lst:
+		tot += float(e[3]) if e.size() > 3 else 1.0
 		if e[0] != kind or e[1] != from or e[2] != to:
-			return false
-	return kind != "in" or true
+			same = false
+	if tot + w <= 2.001:
+		return true
+	return same and tot + w <= 4.001
 
 
-func _use_gate(used: Dictionary, gid: String, kind: String, from: Vector3i, to: Vector3i) -> void:
+func _use_gate(used: Dictionary, gid: String, kind: String, from: Vector3i, to: Vector3i, w := 1.0) -> void:
 	if not used.has(gid):
 		used[gid] = []
-	used[gid].append([kind, from, to])
+	used[gid].append([kind, from, to, w])
 
 
 ## colonna dell'oltre-spostamento: 0 = sicuro, 1-5 = A-E, 6 = F
@@ -735,6 +1008,9 @@ func col_name(col: int) -> String:
 
 func _execute_shifts(plots: Dictionary) -> void:
 	var moves := []        # [u, res]
+	var splits := []       # StarForce che si dividono in FakerForce (33.0)
+	var joins := []        # FakerForce che si riuniscono
+	var res_new := []      # StarForce messe in riserva (32.0)
 	for s in plots:
 		var rp := resolve_plot(int(s), plots[s])
 		for id in rp:
@@ -742,6 +1018,15 @@ func _execute_shifts(plots: Dictionary) -> void:
 			var u: Dictionary = units[id]
 			if r["c"] == "E":
 				u["enh"] = true
+				continue
+			if r["c"] == "F":
+				splits.append(u)
+				continue
+			if r["c"] == "J":
+				joins.append(u)
+				continue
+			if r["c"] == "Rs":
+				res_new.append(u)
 				continue
 			if str(plots[s][id].get("c", "")) == "L":
 				continue
@@ -755,7 +1040,7 @@ func _execute_shifts(plots: Dictionary) -> void:
 				if units.has(v) and units[v]["kind"] == "gate":
 					if not gate_used.has(v):
 						gate_used[v] = []
-					gate_used[v].append([r["c"], r["from"], r["to"]])
+					gate_used[v].append([r["c"], r["from"], r["to"], weight(units[id])])
 		# operazioni speciali (missione di soccorso)
 		for id in plots[s]:
 			if str(plots[s][id].get("c", "")) == "L" and units.has(id):
@@ -796,6 +1081,16 @@ func _execute_shifts(plots: Dictionary) -> void:
 		u["entered"] = true
 		shift_log.append({"id": u["id"], "from": r["from"], "to": dest, "res": res, "c": r["c"]})
 		arrivals.append(u)
+	for u in arrivals:
+		_s16_entry(u)
+		# incrociatori a tachioni: neutralizzano per sempre una StarGate inattiva entrando (45.4)
+		if u.get("tachyon", false) and u["st"] == "on":
+			for g in units_at(u["lz"]):
+				if g["kind"] == "gate" and g["st"] == "on" and inactive.has(g["side"]):
+					log_msg("Un incrociatore a tachioni raggiunge %s, inattiva." % uname(g))
+					_gate_lost(g)
+	_split_join(splits, joins)
+	_set_reserves(res_new)
 	_rec({"k": "shift", "moves": shift_log.duplicate(true)})
 	await _pace(1.6)
 	# soccorso: carico e scarico
@@ -806,8 +1101,212 @@ func _execute_shifts(plots: Dictionary) -> void:
 		_xeno_reveal()
 
 
+# ---------------------------------------------------------------- FakerForce (33.0)
+
+## quante StarForce un lato può ancora dividere: il 10% (per eccesso) delle sue StarForce
+func faker_left(side: int) -> int:
+	if scn_id == 16:
+		return 99
+	if not has_opt("faker"):
+		return 0
+	var n := 0.0
+	for u in live(side, "sf"):
+		n += weight(u)
+	return maxi(0, int(ceil(n * 0.1)) - int(sides[side].get("split", 0)))
+
+
+## FakerForce del lato riunibili in `l` (ne servono quattro, fuori dal combattimento)
+func faker_group(side: int, l: Vector3i) -> Array:
+	var out := []
+	for u in units_at(l):
+		if u["side"] == side and u.get("ff", false) and u["kind"] == "sf":
+			out.append(u)
+	return out
+
+
+func _split_join(splits: Array, joins: Array) -> void:
+	for u in splits:
+		var s: int = u["side"]
+		if u.get("ff", false) or u["st"] != "on" or faker_left(s) <= 0:
+			continue
+		sides[s]["split"] = int(sides[s].get("split", 0)) + 1
+		u["ff"] = true
+		for k in 3:
+			var f := add_unit(s, "sf", u["lz"], u["race"])
+			f["ff"] = true
+			f["start"] = u["start"]
+		log_msg("%s si divide in quattro unità." % sides[s]["nome"])
+	var done := {}
+	for u in joins:
+		if done.has(u["id"]) or u["st"] != "on":
+			continue
+		var l: Vector3i = u["lz"]
+		if sides_at(l).size() > 1:
+			continue
+		var grp := faker_group(u["side"], l)
+		if grp.size() < 4:
+			continue
+		var keep: Dictionary = u
+		var n := 0
+		for f in grp:
+			if f == keep:
+				continue
+			if n >= 3:
+				break
+			f["st"] = "merged"
+			done[f["id"]] = true
+			n += 1
+		keep["ff"] = false
+		done[keep["id"]] = true
+		log_msg("%s riunisce quattro unità in %s." % [sides[keep["side"]]["nome"], Hex.fmt(l)])
+
+
+## una FakerForce si rivela come tale in una LiteZulu contesa, sul Tactical Display o accanto a
+## una StarGate nemica (33.17)
+func _reveal_fakers() -> void:
+	for u in live(-1, "sf"):
+		if not u.get("ff", false) or u.get("ff_known", false):
+			continue
+		if contested.has(u["lz"]):
+			u["ff_known"] = true
+			continue
+		for g in live(-1, "gate"):
+			if hostile(g["side"], u["side"]) and Hex.is_adjacent(g["lz"], u["lz"]):
+				u["ff_known"] = true
+
+
+# ---------------------------------------------------------------- StarForce di riserva (32.0)
+
+## quante StarForce un lato può mettere in riserva: un terzo (per difetto, almeno una)
+func reserve_max(side: int) -> int:
+	if not has_opt("riserve"):
+		return 0
+	var n := 0
+	for u in live(side, "sf"):
+		if not neutralized(u) and not u.get("ff", false):
+			n += 1
+	return maxi(1, n / 3) if n > 0 else 0
+
+
+func _set_reserves(lst: Array) -> void:
+	var count := {}
+	for u in lst:
+		var s: int = u["side"]
+		if u.get("ff", false) or neutralized(u) or int(count.get(s, 0)) >= reserve_max(s):
+			continue
+		count[s] = int(count.get(s, 0)) + 1
+		u["reserve"] = true
+		u["res_lock"] = turn + 1
+
+
+## distanza effettiva e colonna per chiamare una riserva in `to` (32.31, 32.33)
+func reserve_reach(u: Dictionary, to: Vector3i) -> Dictionary:
+	var d := Hex.tdist(u["lz"], to)
+	var eg := {}
+	for g in units_at(to):
+		if g["kind"] == "gate" and hostile(g["side"], u["side"]) and g["st"] == "on":
+			eg = g
+	if not eg.is_empty() and xeno == 0:
+		var add := 4.0
+		if tac != null and tac.l == to and tac.tu.has(eg["id"]) and tac.is_disrupted(eg["id"]):
+			add = 2.0
+		for f in units_at(to):
+			if f["side"] == u["side"] and f["kind"] == "sf":
+				add -= 0.5 if (tac != null and tac.tu.has(f["id"]) and tac.is_disrupted(f["id"])) else 1.0
+		d += maxi(0, int(ceil(add)))
+	var og := gate_at(u["lz"], u["side"])
+	var c := "S"
+	if not og.is_empty() and gate_active(og):
+		c = "GS"
+	return {"d": d, "c": c, "col": shift_column(c, d + _fatigue_add(u, c, ""), u["lz"], to, u["side"])}
+
+
+## dopo gli spostamenti, ogni lato sceglie dove destinare le proprie riserve
+func _assign_reserves() -> void:
+	reserves = {}
+	var by_side := {}
+	for u in live(-1, "sf"):
+		if not u.get("reserve", false):
+			continue
+		if contested.has(u["lz"]):
+			# riserva sfidata nella sua LiteZulu: combatte lì e la riserva è annullata (32.41)
+			u.erase("reserve")
+			continue
+		var opts := []
+		for l in contested:
+			if u["side"] in sides_at(l):
+				opts.append(l)
+		if opts.is_empty():
+			continue
+		if not by_side.has(u["side"]):
+			by_side[u["side"]] = {}
+		by_side[u["side"]][u["id"]] = opts
+	if by_side.is_empty():
+		return
+	var seats := []
+	var reqs := []
+	for s in by_side:
+		seats.append(s)
+		reqs.append({"type": "reserve", "opts": by_side[s]})
+	var rr: Array = await decide_all(seats, reqs)
+	for i in seats.size():
+		var r = rr[i]
+		if not (r is Dictionary):
+			continue
+		for id in r:
+			var dst = r[id]
+			if dst is Array:
+				dst = Vector3i(int(dst[0]), int(dst[1]), int(dst[2]))
+			if dst is Vector3i and by_side[seats[i]].has(id) and dst in by_side[seats[i]][id]:
+				reserves[id] = dst
+				log_msg("%s ha una riserva pronta a intervenire." % sides[seats[i]]["nome"])
+
+
+## chiamata delle riserve destinate a `l`: arrivano in modo stellare (gli oltre-spostamenti si pescano)
+func call_reserves(l: Vector3i) -> Array:
+	var out := []
+	for id in reserves.keys():
+		if reserves[id] != l or not units.has(id):
+			continue
+		var u: Dictionary = units[id]
+		reserves.erase(id)
+		u.erase("reserve")
+		if u["st"] != "on" or contested.has(u["lz"]) and u["lz"] != l:
+			continue
+		if not (u["side"] in sides_at(l)):
+			continue
+		var rc := reserve_reach(u, l)
+		var res := "S"
+		if int(rc["col"]) > 0:
+			var ch := d10()
+			res = D.OVERSHIFT[ch][int(rc["col"]) - 1]
+			log_msg("%s: chiamata della riserva oltre la portata (colonna %s), chit %d." % [uname(u), col_name(int(rc["col"])), ch])
+		if res == "R":
+			_overshift_random(u)
+			continue
+		if res == "M":
+			log_msg("%s non riesce a raggiungere il combattimento." % uname(u))
+			_neutralize(u, turn + 1)
+			continue
+		var og := gate_at(u["lz"], u["side"])
+		if not og.is_empty() and rc["c"] == "GS":
+			if not gate_reserved.has(og["id"]):
+				gate_reserved[og["id"]] = []
+			gate_reserved[og["id"]].append(["GS", u["lz"], l, 1.0])
+		u["start"] = u["lz"]
+		u["lz"] = l
+		u["entered"] = true
+		u["res_arrived"] = true
+		log_msg("%s interviene dalla riserva in %s." % [uname(u), Hex.fmt(l)])
+		out.append(u)
+	return out
+
+
 ## R sull'oltre-spostamento: nel gioco base l'unità esce dalla partita, altrimenti randomizzazione
 func _overshift_random(u: Dictionary) -> void:
+	if xeno > 0 and u["side"] == xeno_side:
+		_combat_random(u)          # 31.53: anche negli oltre-spostamenti
+		return
 	if mode == "base":
 		_kill(u, "persa nello spostamento")
 		return
@@ -864,9 +1363,9 @@ func _kill(u: Dictionary, why: String) -> void:
 		var other: int = (1 - int(u["side"])) if sides.size() == 2 else -1
 		if other >= 0:
 			if u["side"] == xeno_side:
-				vp[other] += 1
+				vp[other] += 10 if scn_id == 15 else 1
 			else:
-				vp[xeno_side] += 5
+				vp[xeno_side] += 1 if scn_id == 15 else 5
 	if scn_id == 38:
 		rescue["lost_sf"] = int(rescue.get("lost_sf", 0)) + 1
 		rescue["lost_pop"] = int(rescue.get("lost_pop", 0)) + int(u.get("load", 0))
@@ -877,6 +1376,8 @@ func uname(u: Dictionary) -> String:
 	if u["kind"] == "gate":
 		var n := star_name(Hex.hexof(u["lz"]))
 		return "la StarGate %s%s (%s)" % [u["label"], " di " + n if n != "" else "", sides[u["side"]]["nome"]]
+	if u.get("ff", false) and u.get("ff_known", false):
+		return "la FakerForce %s (%s)" % [u["label"], sides[u["side"]]["nome"]]
 	return "la StarForce %s (%s)" % [u["label"], sides[u["side"]]["nome"]]
 
 
@@ -951,6 +1452,16 @@ func visibility(u: Dictionary, viewer: int) -> String:
 
 # ---------------------------------------------------------------- combattimento
 
+func _find_contested() -> Dictionary:
+	var sits := {}
+	for u in live():
+		var l: Vector3i = u["lz"]
+		var ss := sides_at(l)
+		if ss.size() >= 2 and _hostile_present(ss):
+			sits[l] = units_at(l).size()
+	return sits
+
+
 func _combat_phase() -> void:
 	var sits := {}
 	for u in live():
@@ -992,6 +1503,10 @@ func _combat_phase() -> void:
 ## Valore di combattimento [8.3]: StarGate 5, StarForce 3 (2 se appena entrata, nel primo segmento),
 ## neutralizzate 1 (StarGate 0) nel gioco base modificato.
 func strength(u: Dictionary, seg: int) -> int:
+	if u.get("ff", false):
+		return 0          # le FakerForce si contano a parte: mezzo punto ciascuna (33.13)
+	if int(u.get("res_seg", -1)) == seg:
+		return 2          # riserva appena arrivata, in modo stellare (32.11)
 	if u["kind"] == "gate":
 		if u["st"] == "limbo":
 			return 0
@@ -1014,9 +1529,22 @@ func _basic_combat(l: Vector3i) -> void:
 	for g in units_at(l):
 		if g["kind"] == "gate":
 			gates_here[g["id"]] = g["side"]
+	var cycle := 0
+	if has_opt("continuita"):
+		cycle = 12 if prolonged.has(l) else 6
+		prolonged.erase(l)
 	while not over and not abort:
 		seg += 1
 		cur_combat["seg"] = seg
+		if seg == 2 and has_opt("riserve"):
+			for ru in call_reserves(l):
+				ru["res_seg"] = 2
+		if cycle > 0 and seg > cycle:
+			# continuità della situazione (35.0): il combattimento prosegue nel prossimo turno
+			if _hostile_present(sides_at(l)):
+				prolonged[l] = true
+				log_msg("Il combattimento in %s non è risolto e prosegue nel prossimo turno." % Hex.fmt(l))
+			break
 		var here := units_at(l)
 		var ss := sides_at(l)
 		if not _hostile_present(ss):
@@ -1030,14 +1558,20 @@ func _basic_combat(l: Vector3i) -> void:
 		for s in ss:
 			var p := 0
 			var el := []
+			var nff := 0
 			for u in here:
 				if u["side"] != s:
 					continue
 				if first:
 					if u["kind"] == "gate":
 						continue
+				if u.get("ff", false):
+					nff += 1
 				p += strength(u, seg)
 				el.append(u["id"])
+				if seg >= 2 and u["kind"] == "sf" and not u.get("ff", false) and not neutralized(u):
+					u["bm_now"] = true
+			p += (nff + 1) / 2
 			pools[s] = p
 			eligible[s] = el
 		if first:
@@ -1133,7 +1667,7 @@ func _basic_combat(l: Vector3i) -> void:
 				quiet = 0
 			else:
 				quiet += 1
-			if quiet >= 6:
+			if quiet >= 6 and cycle == 0:
 				quiet = 0
 				_stalemate_breakoff(l)
 	# fine del combattimento: StarGate in sospeso [9.31]
@@ -1189,7 +1723,24 @@ func _clean_alloc(s: int, r, pools: Dictionary, l: Vector3i, seg: int, first: bo
 		if p > 0 and hostile(s, int(t)) and pools.has(int(t)):
 			out["att"][int(t)] = p
 			tot += p
-	out["defp"] = clampi(int(r.get("def", pool - tot)), 0, pool - tot) + brk_pts
+	var min_def := 0
+	if has_opt("fatica"):
+		for u in units_at(l):
+			if u["side"] == s and u["kind"] == "sf" and fatigue(u) >= 2:
+				min_def += 1
+	min_def = mini(min_def, pool)
+	# incrociatori a tachioni: nessuna forza di difesa (45.4)
+	var tach := 0
+	for u in units_at(l):
+		if u["side"] == s and u.get("tachyon", false):
+			tach += strength(u, seg)
+	while pool - tot < min_def and not out["att"].is_empty():
+		var k = out["att"].keys()[0]
+		out["att"][k] -= 1
+		tot -= 1
+		if out["att"][k] <= 0:
+			out["att"].erase(k)
+	out["defp"] = clampi(int(r.get("def", pool - tot)), mini(min_def, pool - tot), maxi(0, pool - tot - tach)) + brk_pts
 	out["brk"] = brk
 	out["refuse"] = bool(r.get("refuse", false)) and first
 	out["nova"] = str(r.get("nova", ""))
@@ -1218,11 +1769,18 @@ func _apply_losses(side: int, l: Vector3i, n: int, first: bool, alloc: Dictionar
 		_destroy_gate_basic(gate)
 		n -= 2
 		lost = true
+	var ff_hits := 0
 	while n > 0 and k < pool.size():
 		var u: Dictionary = pool[k]
 		k += 1
-		n -= 1
 		lost = true
+		if u.get("ff", false):
+			ff_hits += 1
+			if ff_hits >= 4:
+				ff_hits = 0
+				n -= 1
+		else:
+			n -= 1
 		if mode == "modificato" or (xeno > 0 and u["side"] == xeno_side):
 			_combat_random(u)
 		else:
@@ -1271,12 +1829,17 @@ func _gate_lost(g: Dictionary) -> void:
 	g["st"] = "dead"
 	gates_lost[g["side"]] += 1
 	log_msg("%s è stata neutralizzata in modo permanente." % uname(g))
+	_gate_points(g)
+	if sc.has("politica") and politics.get("joined", -1) < 0 and g["side"] < 2 and not Hex.hexof(g["lz"]) in sides[g["side"]]["casa"]:
+		if not politics.has("skip"):
+			politics["skip"] = {}
+		politics["skip"][g["side"]] = true
 	if scn_id == 7 and first_neut < 0:
 		# il primo lato a neutralizzare una StarGate nemica riceve i L'Chal-Dah
 		var winner: int = 1 - int(g["side"])
 		first_neut = winner
 	if xeno > 0 and g["side"] == xeno_side:
-		vp[1 - xeno_side] += 25
+		vp[1 - xeno_side] += 80 if scn_id == 15 else 25
 	_rec({"k": "gate_lost", "id": g["id"], "lz": g["lz"]})
 
 
@@ -1290,6 +1853,11 @@ func _nova(l: Vector3i, by: Dictionary) -> void:
 		pts = {"h": 50, "s": 30, "t": 5}[st["cls"]]
 	if by["side"] == xeno_side and xeno_side >= 0:
 		vp[xeno_side] += pts
+		if scn_id == 15 and not rescue.get("s15_extra", false):
+			rescue["s15_extra"] = true
+			reinf_left += 4
+			rescue["s15_now"] = 4
+			log_msg("I Wanderers si schierano: quattro StarForce in più per la Lega.")
 	log_msg("La stella %s è esplosa in nova!" % st["name"])
 	for g in units_at(l):
 		if g["kind"] == "gate" and g["st"] == "on":
@@ -1384,6 +1952,251 @@ func _stalemate_breakoff(l: Vector3i) -> void:
 
 # ---------------------------------------------------------------- fine turno
 
+# ---------------------------------------------------------------- scenari 15-21
+
+## scenario 20, Operazione Cartagine (46.0): solitario sul Tactical Display del sistema natale xenofobo
+func _carthage() -> void:
+	var home := star_hex_lz(2008)
+	var g := add_unit(1, "gate", home, "xeno")
+	var tr := add_unit(1, "sf", home, "xeno")
+	tr["transport"] = true
+	var entry := Hex.lz(2008, 19)
+	for a in Hex.adjacent_lz(home):
+		if valid_lz(a):
+			entry = a
+			break
+	for k in 4:
+		var u := add_unit(0, "sf", home, "psl")
+		u["start"] = entry
+		u["entered"] = true
+	sides[0]["sf0"] = 4
+	sides[1]["sf0"] = 1
+	sides[0]["casa"] = []
+	sides[1]["casa"] = [2008]
+	_rec({"k": "start"})
+	turn = 1
+	log_msg("— Operazione Cartagine —")
+	_turn_start()
+	for u in live():
+		if u["side"] == 0:
+			u["start"] = entry
+			u["entered"] = true
+	contested = {home: true}
+	phase = "combat"
+	tac = Tac.new()
+	tac.eng = self
+	tac.transport = tr["id"]
+	await tac.run(home)
+	var won: bool = tac.nova_done
+	tac = null
+	if abort:
+		return
+	if won:
+		_win(0, "la stella del sistema natale xenofobo è esplosa: il trasporto non è riuscito a fuggire.")
+	else:
+		_win(1, "il trasporto xenofobo è fuggito verso il suo rifugio segreto.")
+
+
+# ---------------------------------------------------------------- scenari 15-21
+
+## scenario 21: ogni giocatore pesca un chit politico dal sacchetto della Lega Umana (27.4.3)
+func _politics_draw() -> void:
+	if politics.get("joined", -1) >= 0:
+		return
+	if not politics.has("bag"):
+		politics["bag"] = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+		politics["pts"] = [0, 0]
+		politics["skip"] = {}
+	for s in 2:
+		var bag: Array = politics["bag"]
+		if bag.is_empty():
+			break
+		if politics["skip"].get(s, false):
+			politics["skip"].erase(s)
+			log_msg("%s salta la pesca politica (ha perso una StarGate coloniale)." % sides[s]["nome"])
+			continue
+		var k := rng.randi_range(0, bag.size() - 1)
+		var c: int = bag[k]
+		bag.remove_at(k)
+		politics["pts"][s] += c
+		log_msg("Pesca politica di %s: %d (totale %d)." % [sides[s]["nome"], c, politics["pts"][s]])
+	for s in 2:
+		if int(politics["pts"][s]) >= int(sc["politica"]):
+			politics["joined"] = s
+			politics["join_turn"] = turn + 1
+			log_msg("La Lega Umana si schiera con %s: dal prossimo turno ne comanda le forze." % sides[s]["nome"])
+			return
+
+
+func _politics_join() -> void:
+	var s: int = politics.get("joined", -1)
+	if s < 0 or politics.get("done", false) or turn < int(politics.get("join_turn", 999)):
+		return
+	politics["done"] = true
+	for u in live(2):
+		u["side"] = s
+	for id in order:
+		if units[id]["side"] == 2:
+			units[id]["side"] = s
+	inactive.erase(2)
+	_rec({"k": "politics", "side": s})
+
+
+## scenario 19: alla fine di ogni turno un chit; con il 9 la Lega si attiva (45.4)
+func _activation_draw() -> void:
+	if not inactive.has(0) or scn_id != 19:
+		return
+	var c := d10()
+	log_msg("Sciopero dei Gnostech: chit %d%s." % [c, ", la Lega Pan-Senziente si attiva!" if c == 9 else ", la Lega resta ferma"])
+	if c != 9:
+		return
+	inactive.erase(0)
+	var spots := []
+	for h in sides[0]["casa"]:
+		spots.append(star_hex_lz(int(h)))
+	for g in live(0, "gate"):
+		if star_at(g["lz"]).get("casuale", false):
+			spots.append(g["lz"])
+	var n := int(sc["lati"][0].get("tutti_i_sistemi", 24))
+	for u in live(0, "sf"):
+		u["st"] = "dead"
+	for k in n:
+		add_unit(0, "sf", spots[k % spots.size()])
+	_rec({"k": "activate", "side": 0})
+
+
+## scenario 16: la prima volta che una FakerForce entra in un sistema altrui si pesca un chit (42.4)
+func _s16_entry(u: Dictionary) -> void:
+	if scn_id != 16 or not u.get("ff", false) or u["st"] != "on":
+		return
+	var st := star_at(u["lz"])
+	if st.is_empty():
+		return
+	var own := false
+	for g in units_at(u["lz"]):
+		if g["kind"] == "gate" and g["side"] == u["side"]:
+			own = true
+	if own:
+		return
+	var seen: Dictionary = u.get("visited", {})
+	if seen.has(u["lz"]):
+		return
+	seen[u["lz"]] = true
+	u["visited"] = seen
+	var c := d10()
+	if c >= 8:
+		log_msg("%s entra in %s: la StarGate locale la scambia per un attacco (chit %d)." % [uname(u), st["name"], c])
+		_overshift_random(u)
+
+
+## sistemi terziari tenuti da sole FakerForce di un lato, e FakerForce a Wandering's End
+func _s16_check(end_of_turn: bool) -> void:
+	if not end_of_turn:
+		return
+	var we := star_hex_lz(2223)
+	for s in sides.size():
+		var held := 0
+		for l in star_lz:
+			if star_lz[l]["cls"] != "t" or destroyed_stars.has(l):
+				continue
+			var mine := false
+			var other := false
+			for u in units_at(l):
+				if u["kind"] != "sf":
+					continue
+				if u["side"] == s and u.get("ff", false):
+					mine = true
+				elif u["side"] != s:
+					other = true
+			if mine and not other:
+				held += 1
+		if held >= 8:
+			s16_hold[s] = int(s16_hold.get(s, 0)) + 1
+			if int(s16_hold[s]) >= 2:
+				_win(s, "tiene otto sistemi terziari con le sue FakerForce per due turni di fila.")
+				return
+		else:
+			s16_hold[s] = 0
+		var n_we := 0
+		var enemy_we := false
+		for u in units_at(we):
+			if u["kind"] == "sf" and u.get("ff", false):
+				if u["side"] == s:
+					n_we += 1
+				else:
+					enemy_we = true
+		if n_we >= 8 and not enemy_we:
+			_win(s, "ha otto FakerForce a Wandering's End senza nemici.")
+			return
+
+
+## punti per una StarGate neutralizzata (scenari 17-19)
+func _gate_points(g: Dictionary) -> void:
+	var pts: Dictionary = sc.get("punti", {})
+	if pts.is_empty():
+		return
+	var st := star_at(g["lz"])
+	if st.is_empty():
+		st = star_lz.get(g["lz"], {})
+	var cls: String = st.get("cls", "t")
+	var outer: bool = st.get("casuale", false)
+	for s in sides.size():
+		if not hostile(s, g["side"]) and not (s != g["side"] and sc.get("pace", []).size() > 0):
+			continue
+		if s == g["side"]:
+			continue
+		var tab: Dictionary = pts.get(str(s), {})
+		var v := 0
+		if tab.has("porta_%d" % g["side"]):
+			v = int(tab["porta_%d" % g["side"]])
+		elif tab.has("porta"):
+			v = int(tab["porta"])
+		elif outer and tab.has("casuale"):
+			v = int(tab["casuale"])
+		elif tab.has(cls):
+			v = int(tab[cls])
+		if v <= 0:
+			continue
+		# i punti vanno a chi ha forze nella LiteZulu (o, se nessuno, a tutti i nemici con quella voce)
+		var present := false
+		for u in units_at(g["lz"]):
+			if u["side"] == s:
+				present = true
+		if present or sides.size() == 2:
+			vp[s] += v
+			log_msg("%s guadagna %d punti." % [sides[s]["nome"], v])
+
+
+func _points_final() -> void:
+	var pts: Dictionary = sc.get("punti", {})
+	for s in sides.size():
+		var tab: Dictionary = pts.get(str(s), {})
+		if tab.has("intatta") and gates_lost[s] == 0:
+			vp[s] += int(tab["intatta"])
+			log_msg("%s non ha perso StarGate: %d punti." % [sides[s]["nome"], int(tab["intatta"])])
+		if tab.has("intatta_sistemi"):
+			var occupied := false
+			for g in live(s, "gate"):
+				for u in units_at(g["lz"]):
+					if u["kind"] == "sf" and u["side"] != s:
+						occupied = true
+			if not occupied:
+				vp[s] += int(tab["intatta_sistemi"])
+				log_msg("Nessun sistema di %s è occupato: %d punti." % [sides[s]["nome"], int(tab["intatta_sistemi"])])
+	var best := -1
+	var bv := -1
+	var tie := false
+	for s in sides.size():
+		if vp[s] > bv:
+			bv = vp[s]
+			best = s
+			tie = false
+		elif vp[s] == bv:
+			tie = true
+	var txt := ", ".join(range(sides.size()).map(func(k): return "%s %d" % [sides[k]["nome"], vp[k]]))
+	_win(-1 if tie else best, "punti: %s." % txt)
+
+
 func _end_turn() -> void:
 	phase = "end"
 	# StarGate in sospeso [9.31]
@@ -1424,6 +2237,17 @@ func _end_turn() -> void:
 	for u in live():
 		u.erase("enh")
 		u.erase("loading")
+		u.erase("reserve")
+		u.erase("res_seg")
+		u.erase("res_arrived")
+		# fatica (36.0): turni consecutivi in modo battaglia
+		if u["kind"] == "sf":
+			if u.get("bm_now", false):
+				u["bm"] = int(u.get("bm", 0)) + 1
+			else:
+				u["bm"] = 0
+			u.erase("bm_now")
+	reserves = {}
 	if scn_id == 7 and first_neut >= 0 and not occupy.has("lcd"):
 		occupy["lcd"] = true
 		for spec in sc.get("rinforzi_lcd", []):
@@ -1432,6 +2256,9 @@ func _end_turn() -> void:
 			for k in int(spec[1]):
 				add_unit(first_neut, "sf", l, "lcd")
 		log_msg("I L'Chal-Dah si schierano con %s." % sides[first_neut]["nome"])
+	_activation_draw()
+	if turn_hook != null:
+		turn_hook.call()
 	_rec({"k": "turn_end"})
 
 
@@ -1532,6 +2359,15 @@ func _check_victory(end_of_turn: bool) -> void:
 			_xeno_victory(end_of_turn)
 		"soccorso":
 			pass
+		"s16":
+			_s16_check(end_of_turn)
+		"punti":
+			for s in sides.size():
+				if _gates_alive(s).is_empty() and not inactive.has(s):
+					_points_final()
+					return
+		"cartagine":
+			pass
 
 
 ## occupazione: lato solo nella LiteZulu all'inizio e alla fine del turno (qui: a fine turno, contando
@@ -1586,6 +2422,8 @@ func _time_up() -> void:
 			_xeno_victory(true, true)
 		"soccorso":
 			_rescue_score("La partita è finita.")
+		"punti":
+			_points_final()
 		_:
 			var best := -1
 			var bl := -1
@@ -1666,11 +2504,22 @@ func _xeno_adjacent_any() -> bool:
 
 func _xeno_turn_start() -> void:
 	var psl := 1 - xeno_side
+	if int(rescue.get("s15_now", 0)) > 0:
+		var gs := []
+		for g in live(psl, "gate"):
+			if gate_active(g):
+				gs.append(g)
+		for k in int(rescue["s15_now"]):
+			if gs.is_empty():
+				break
+			add_unit(psl, "sf", gs[k % gs.size()]["lz"])
+			reinf_left -= 1
+		rescue["s15_now"] = 0
 	if turn >= 2 and turn % 2 == 0 and reinf_left > 0:
 		var home := {}
-		for h in [2020, 2326, 2036]:
+		for h in sides[psl]["casa"]:
 			for g in live(psl, "gate"):
-				if Hex.hexof(g["lz"]) == h and gate_active(g):
+				if Hex.hexof(g["lz"]) == int(h) and gate_active(g):
 					home = g
 					break
 			if not home.is_empty():
@@ -1728,7 +2577,7 @@ func _xeno_reveal() -> void:
 		var best := {}
 		var bn := 1
 		for g in live(psl, "gate"):
-			if Hex.hexof(g["lz"]) in [2020, 2326, 2036]:
+			if Hex.hexof(g["lz"]) in sides[psl]["casa"]:
 				continue
 			var n := 0
 			for u in live(xeno_side, "sf"):
@@ -1755,8 +2604,8 @@ func _xeno_reveal() -> void:
 func _xeno_victory(end_of_turn: bool, time_up := false) -> void:
 	var psl := 1 - xeno_side
 	var homes_left := 0
-	for h in [2020, 2326, 2036]:
-		var l := star_hex_lz(h)
+	for h in sides[psl]["casa"]:
+		var l := star_hex_lz(int(h))
 		if not destroyed_stars.has(l):
 			homes_left += 1
 	if homes_left == 0:

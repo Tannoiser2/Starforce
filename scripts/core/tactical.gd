@@ -25,6 +25,29 @@ var casts_shown: Array = []   # proiezioni dell'ultima fase (per la vista)
 var known := {}            # lato -> {uid: Vector3i ultima posizione nota}
 var phase_n := 0
 var plans := {}
+var nova_armed := {}       # {"tt": Tac-turno dell'esplosione, "by": uid} (31.52)
+var nova_done := false
+var transport := ""        # scenario 20: il trasporto xenofobo
+var extra_tt := 0          # Tac-turni concessi agli Xenofobi per innescare la nova
+
+
+## chi può piantare l'innesco della nova in questa LiteZulu: gli Xenofobi in un sistema della Lega,
+## la Lega nel sistema natale xenofobo (scenario 20)
+func can_trigger(side: int) -> bool:
+	if not star or nova_done:
+		return false
+	if eng.scn_id == 20:
+		return side == 0
+	return eng.xeno > 0 and side == eng.xeno_side
+
+
+## la StarGate del sistema (nemica di chi innesca) è disgregata o neutralizzata?
+func gate_down(side: int) -> bool:
+	for u in units():
+		if u["kind"] == "gate" and eng.hostile(u["side"], side):
+			if not (tu[u["id"]]["neut"] or is_disrupted(u["id"])):
+				return false
+	return true
 
 
 func units() -> Array:
@@ -59,15 +82,19 @@ func televalue(id: String, mode := "") -> int:
 		return D.TELE_GATE / 2 if is_disrupted(id) else D.TELE_GATE
 	var m: String = mode if mode != "" else tu[id]["mode"]
 	var v: int = D.TELE_BATTLE if m == "battle" else D.TELE_STELLAR
+	if u.get("ff", false):
+		v = D.FF_TELE_BATTLE if m == "battle" else D.FF_TELE_STELLAR
 	return v / 2 if is_disrupted(id) else v
 
 
-func tac_cost(mode: String, dist: int) -> int:
+func tac_cost(mode: String, dist: int, ff := false) -> int:
 	if dist <= 0:
 		return 0
 	if mode == "battle":
-		return D.TAC_COST_BATTLE[dist] if dist < D.TAC_COST_BATTLE.size() else 999
-	return D.TAC_COST_STELLAR[dist] if dist < D.TAC_COST_STELLAR.size() else 999
+		var tb: Array = D.FF_COST_BATTLE if ff else D.TAC_COST_BATTLE
+		return tb[dist] if dist < tb.size() else 999
+	var ts: Array = D.FF_COST_STELLAR if ff else D.TAC_COST_STELLAR
+	return ts[dist] if dist < ts.size() else 999
 
 
 ## Verifica il piano di una StarForce e calcola costi e anti-proiezione:
@@ -83,11 +110,15 @@ func check_sf(id: String, p: Dictionary) -> Dictionary:
 	var mode2 := mode
 	var tv := televalue(id)
 	var pos: Vector3i = t["pos"]
+	var ff: bool = eng.units[id].get("ff", false)
+	if int(t.get("late", -1)) == tt and k1 != "":
+		return _bad(res, "la riserva appena arrivata agisce solo nella seconda fase")
 	if k1 == "M":
 		mode2 = "stellar" if mode == "battle" else "battle"
 		tv = televalue(id, mode2)
-		res["cost1"] = tv / 2 if not is_disrupted(id) else tv
 		res["cost1"] = (D.TELE_BATTLE if mode2 == "battle" else D.TELE_STELLAR) / 2
+		if ff:
+			res["cost1"] = (D.FF_TELE_BATTLE if mode2 == "battle" else D.FF_TELE_STELLAR) / 2
 	elif k1 == "T":
 		var to: Vector3i = a1["to"]
 		if not Hex.tvalid(to):
@@ -95,7 +126,7 @@ func check_sf(id: String, p: Dictionary) -> Dictionary:
 		var d := Hex.ttrue(pos, to)
 		if not _star_ok(pos, to, d):
 			return _bad(res, "la stella si può raggiungere o lasciare solo da un MiniLite")
-		res["cost1"] = tac_cost(mode, d)
+		res["cost1"] = tac_cost(mode, d, ff)
 		pos = to
 	elif k1 == "C":
 		res["cost1"] = int(a1.get("p", 0))
@@ -103,6 +134,20 @@ func check_sf(id: String, p: Dictionary) -> Dictionary:
 			return _bad(res, "proiezione non valida")
 	elif k1 == "B":
 		return _bad(res, "la ritirata si fa solo nella seconda fase")
+	elif k1 == "N":
+		# innesco della nova: un intero Tac-turno nel MiniLite della stella, in modo stellare, metà dei
+		# TelePunti; la StarGate deve essere disgregata o neutralizzata (31.52)
+		if not can_trigger(eng.units[id]["side"]):
+			return _bad(res, "qui non si può innescare una nova")
+		if pos != Vector3i(0, 0, -1):
+			return _bad(res, "bisogna essere nel MiniLite della stella (000/-1)")
+		if mode != "stellar":
+			return _bad(res, "per innescare la nova bisogna essere in modo stellare")
+		if not gate_down(eng.units[id]["side"]):
+			return _bad(res, "la StarGate del sistema deve essere disgregata o neutralizzata")
+		if k2 != "":
+			return _bad(res, "l'innesco occupa tutto il Tac-turno")
+		res["cost1"] = tv / 2
 	res["mode2"] = mode2
 	if k2 == "M":
 		return _bad(res, "il cambio di modo si fa solo nella prima fase")
@@ -113,7 +158,7 @@ func check_sf(id: String, p: Dictionary) -> Dictionary:
 		var d2 := Hex.ttrue(pos, to2)
 		if not _star_ok(pos, to2, d2):
 			return _bad(res, "la stella si può raggiungere o lasciare solo da un MiniLite")
-		res["cost2"] = tac_cost(mode2, d2)
+		res["cost2"] = tac_cost(mode2, d2, ff)
 	elif k2 == "C":
 		res["cost2"] = int(a2.get("p", 0))
 		if not int(a2.get("p", 0)) in D.CAST_LEVELS:
@@ -121,11 +166,18 @@ func check_sf(id: String, p: Dictionary) -> Dictionary:
 	elif k2 == "B":
 		if mode2 != "stellar":
 			return _bad(res, "per ritirarsi bisogna essere in modo stellare")
-		res["cost2"] = D.BREAKOFF_COST
+		res["cost2"] = D.FF_BREAKOFF_COST if ff else D.BREAKOFF_COST
 		var bto = a2.get("to", null)
 		if not (bto is Vector3i) or not eng.breakoff_ok(eng.units[id], bto):
 			return _bad(res, "destinazione di ritirata non valida")
 	res["tv"] = tv
+	# fatica (36.1 B): nessuna proiezione con più di metà dei TelePunti
+	if eng.fatigue(eng.units[id]) >= 2:
+		for a in [a1, a2]:
+			if str(a.get("k", "")) == "C" and int(a.get("p", 0)) > tv / 2:
+				return _bad(res, "equipaggio affaticato: al massimo metà dei TelePunti in una proiezione")
+	if nova_done and pos == Vector3i(0, 0, -1) and k1 == "T":
+		return _bad(res, "la stella è esplosa: il suo MiniLite non si può più raggiungere")
 	var spent: int = res["cost1"] + res["cost2"]
 	if k1 == "M":
 		spent = res["cost1"] + res["cost2"]
@@ -190,10 +242,20 @@ func run(lz: Vector3i) -> void:
 	if eng.abort:
 		return
 	eng._rec({"k": "tac_start", "lz": l, "tac": snapshot()})
+	var cycle := 0
+	if eng.has_opt("continuita"):
+		cycle = 24 if eng.prolonged.has(l) else 12
+		eng.prolonged.erase(l)
 	while not eng.abort and not eng.over:
 		tt += 1
 		if eng.scn_id == 1 and eng.s1_start < 0:
 			eng.s1_start = tt
+		if cycle > 0 and tt > cycle:
+			eng.prolonged[l] = true
+			eng.log_msg("Il combattimento in %s non è risolto e prosegue nel prossimo turno." % Hex.fmt(l))
+			break
+		if tt == 3 and eng.has_opt("riserve"):
+			_reserves_in()
 		await _tac_turn()
 		if eng.abort:
 			return
@@ -244,6 +306,17 @@ func _deploy() -> void:
 			var u: Dictionary = eng.units[id]
 			if e.size() > 1 and bool(e[1]) and u["start"] == l:
 				tu[id]["mode"] = "battle"
+	if transport != "" and tu.has(transport):
+		var cells: Array = []
+		for c in Hex.t_all():
+			if Hex.tring(Vector3i(c.x, c.y, 0)) <= 2:
+				cells.append(c)
+		var a: Vector2i = cells[eng.rng.randi_range(0, cells.size() - 1)]
+		var z: int = eng.rng.randi_range(-2, 2)
+		if a == Vector2i.ZERO and z in [0, -1]:
+			z = 3
+		tu[transport]["pos"] = Vector3i(a.x, a.y, z)
+		tu[transport]["mode"] = "stellar"
 	for u in units():
 		if u["kind"] == "sf":
 			known[u["side"]][u["id"]] = tu[u["id"]]["pos"]
@@ -316,6 +389,7 @@ func _tac_turn() -> void:
 	_exec_moves(1)
 	eng._rec({"k": "tac_move", "lz": l, "ph": 1, "tac": snapshot()})
 	await eng._pace(0.8)
+	_nova_blast()
 	var hit1 := await _exec_casts(1, antis)
 	# modifica del piano per chi è stato disgregato nella prima fase [12.5]
 	for id in hit1:
@@ -334,6 +408,7 @@ func _tac_turn() -> void:
 	eng._rec({"k": "tac_move", "lz": l, "ph": 2, "tac": snapshot()})
 	await eng._pace(0.8)
 	await _exec_casts(2, antis)
+	_nova_plant()
 	# D. rivelazione, E. recupero dalla disgregazione
 	_reveal()
 	for id in tu:
@@ -368,6 +443,48 @@ func _tac_turn() -> void:
 	eng._rec({"k": "tac_turn", "lz": l, "tac": snapshot()})
 
 
+## riserve chiamate all'inizio del terzo Tac-turno (32.1): compaiono in modo stellare sulla posizione
+## di un'unità amica non neutralizzata già presente
+func _reserves_in() -> void:
+	for u in eng.call_reserves(l):
+		var spot := Vector3i(5, 0, 0)
+		for f in units():
+			if f["side"] == u["side"] and not (f["kind"] == "gate" and tu[f["id"]]["neut"]):
+				spot = tu[f["id"]]["pos"]
+				break
+		tu[u["id"]] = {"pos": spot, "mode": "stellar", "dis": -1, "neut": false, "out": "", "hit": -1, "late": tt}
+		known[u["side"]][u["id"]] = spot
+
+
+## fine del Tac-turno: l'innesco è piantato se chi lo piantava è ancora lì, non disgregato
+func _nova_plant() -> void:
+	if not nova_armed.is_empty() or nova_done:
+		return
+	for s in plans:
+		for id in plans[s]:
+			if str(plans[s][id].get("a1", {}).get("k", "")) != "N":
+				continue
+			if not tu.has(id) or tu[id]["out"] != "" or int(tu[id]["hit"]) == tt or is_disrupted(id):
+				continue
+			if tu[id]["pos"] != Vector3i(0, 0, -1) or not gate_down(eng.units[id]["side"]):
+				continue
+			nova_armed = {"tt": tt + 1, "by": id}
+			eng.log_msg("%s ha piantato l'innesco nella stella: esploderà nel prossimo Tac-turno!" % eng.uname(eng.units[id]))
+			return
+
+
+func _nova_blast() -> void:
+	if nova_armed.is_empty() or nova_done or int(nova_armed["tt"]) != tt:
+		return
+	nova_done = true
+	eng.log_msg("La stella esplode in nova!")
+	eng._rec({"k": "nova", "lz": l})
+	for u in units():
+		if u["kind"] == "sf" and tu[u["id"]]["pos"] == Vector3i(0, 0, -1):
+			tu[u["id"]]["out"] = "dead"
+			eng._kill(u, "è stata incenerita dalla nova")
+
+
 func _clean_plan(s: int, r: Dictionary) -> Dictionary:
 	var out := {}
 	for u in units():
@@ -383,6 +500,9 @@ func _clean_plan(s: int, r: Dictionary) -> Dictionary:
 			out[id] = p if c["ok"] else {"c1": [], "c2": []}
 			out[id]["_chk"] = check_gate(id, out[id])
 		else:
+			if int(tu[id].get("late", -1)) == tt:
+				p = p.duplicate(true)
+				p["a1"] = {"k": ""}
 			var c2 := check_sf(id, p)
 			if not c2["ok"]:
 				p = {"a1": {"k": ""}, "a2": {"k": ""}}
@@ -438,6 +558,8 @@ func _exec_moves(ph: int) -> void:
 					tu[id]["pos"] = a["to"]
 				"M":
 					tu[id]["mode"] = "battle" if tu[id]["mode"] == "stellar" else "stellar"
+					if tu[id]["mode"] == "battle":
+						tu[id]["was_battle"] = true
 					eng.log_msg("%s passa in modo %s." % [eng.uname(eng.units[id]), "battaglia" if tu[id]["mode"] == "battle" else "stellare"])
 
 
@@ -518,7 +640,7 @@ func _exec_casts(ph: int, antis: Dictionary) -> Array:
 		var r: String = D.CAST_TABLE[ch][col]
 		results[tid] = r
 		outcome.append({"id": tid, "tot": tot, "anti": antis.get(tid, 0), "chit": ch, "res": r})
-		eng.log_msg("Proiezioni su %s: %d contro anti-proiezione %d, chit %d: %s." % [eng.uname(t), tot, antis.get(tid, 0), ch, {".": "nessun effetto", "D": "disgregata", "R": "randomizzata" if t["kind"] == "sf" else "disgregata"}[r]])
+		eng.log_msg("Proiezioni su %s: %d contro anti-proiezione %d, chit %d: %s." % [eng.uname(t), tot, antis.get(tid, 0), ch, {".": "nessun effetto", "D": "disgregata", "R": "randomizzata" if t["kind"] == "sf" and tid != transport else "disgregata"}[r]])
 	var dis := []
 	for tid in results:
 		var r: String = results[tid]
@@ -537,6 +659,9 @@ func _exec_casts(ph: int, antis: Dictionary) -> Array:
 					dis.append(tid)
 			continue
 		if r == "D" and not is_disrupted(tid):
+			tu[tid]["dis"] = tt
+			dis.append(tid)
+		elif tid == transport:
 			tu[tid]["dis"] = tt
 			dis.append(tid)
 		else:
@@ -579,6 +704,10 @@ func _modify(id: String) -> void:
 func _randomize(u: Dictionary) -> void:
 	var id: String = u["id"]
 	tu[id]["out"] = "rand"
+	if eng.xeno > 0 and u["side"] == eng.xeno_side:
+		# Xenofobi randomizzati: fuori per tre turni (31.53)
+		eng._combat_random(u)
+		return
 	var r: Dictionary = eng._randomize_draw(u, false)
 	match r["k"]:
 		"dstr":
@@ -607,6 +736,24 @@ func _do_breakoff(u: Dictionary, dst: Vector3i) -> void:
 
 ## [11.12F] la sequenza finisce quando non restano unità ostili fra loro (StarGate neutralizzate escluse)
 func _judgment() -> bool:
+	# Xenofobi: con la StarGate a terra la sequenza prosegue finché possono innescare la nova (31.52)
+	if eng.xeno > 0 and star and not nova_done:
+		if not nova_armed.is_empty():
+			return false
+		var xs := false
+		for u in units():
+			if u["side"] == eng.xeno_side and u["kind"] == "sf" and not is_disrupted(u["id"]):
+				xs = true
+		if xs and gate_down(eng.xeno_side) and int(extra_tt) < 4:
+			for u in units():
+				if u["kind"] == "gate" and eng.hostile(u["side"], eng.xeno_side):
+					extra_tt += 1
+					return false
+	if eng.scn_id == 20:
+		if nova_done:
+			return true
+		if transport != "" and (not tu.has(transport) or tu[transport]["out"] != ""):
+			return true
 	var ss := []
 	for u in units():
 		if u["kind"] == "gate" and tu[u["id"]]["neut"]:
@@ -621,6 +768,15 @@ func _judgment() -> bool:
 
 
 func _finish() -> void:
+	# nova innescata: la stella e il sistema sono distrutti alla fine della sequenza (31.52)
+	if nova_done:
+		var by: Dictionary = eng.units.get(nova_armed.get("by", ""), {})
+		if by.is_empty():
+			for u in units():
+				by = u
+				break
+		if not by.is_empty():
+			eng._nova(l, by)
 	# StarGate neutralizzate [14.72]
 	var ss := []
 	for u in units():
@@ -642,7 +798,11 @@ func _finish() -> void:
 	# modo battaglia e posizioni non contano più sullo Stellar Display
 	for id in tu:
 		if eng.units.has(id):
+			if tu[id].get("was_battle", false) or tu[id]["mode"] == "battle":
+				eng.units[id]["bm_now"] = true
 			eng.units[id]["mode"] = "stellar"
+			if eng.units[id].get("ff", false):
+				eng.units[id]["ff_known"] = true
 	eng._rec({"k": "tac_end", "lz": l})
 	eng.cur_combat = {}
 

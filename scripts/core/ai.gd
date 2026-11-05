@@ -36,7 +36,36 @@ func decide(eng, s: int, req: Dictionary):
 			return tplot(eng, s, req)
 		"xsign":
 			return 1 if rng.randi_range(0, 1) == 0 else -1
+		"reserve":
+			return reserve(eng, s, req)
 	return {}
+
+
+## destinazione delle riserve (32.0): la LiteZulu contesa raggiungibile senza rischi, preferendo
+## quella dove il lato ha una StarGate da difendere o più unità impegnate
+func reserve(eng, s: int, req: Dictionary) -> Dictionary:
+	var out := {}
+	var opts: Dictionary = req.get("opts", {})
+	for id in opts:
+		var u: Dictionary = eng.units[id]
+		var best = null
+		var bv := -1.0
+		for l in opts[id]:
+			var rc: Dictionary = eng.reserve_reach(u, l)
+			if int(rc["col"]) > 0:
+				continue
+			var v := 1.0
+			if not eng.gate_at(l, s).is_empty():
+				v += 3.0
+			for f in eng.units_at(l):
+				if f["side"] == s:
+					v += 0.5
+			if v > bv:
+				bv = v
+				best = l
+		if best != null:
+			out[id] = best
+	return out
 
 
 # ================================================================ piano stellare
@@ -44,6 +73,8 @@ func decide(eng, s: int, req: Dictionary):
 func plot(eng, s: int, req: Dictionary) -> Dictionary:
 	if eng.scn_id == 38:
 		return _rescue_plot(eng, s)
+	if eng.scn_id == 16:
+		return _faker_plot(eng, s)
 	var mine: Array = []
 	for u in eng.live(s, "sf"):
 		if not eng.neutralized(u):
@@ -94,10 +125,15 @@ func plot(eng, s: int, req: Dictionary) -> Dictionary:
 			if eng.hostile(e["side"], s) and eng.visibility(e, s) != "none" and Hex.hexof(e["lz"]) == Hex.hexof(lz):
 				guard += 1
 		sc -= guard * 3.0
+		# fedeltà all'obiettivo scelto nei turni precedenti: senza, con molti bersagli simili le forze
+		# cambierebbero idea a ogni turno e non si radunerebbero mai
+		if memo.get("tgt", null) == lz:
+			sc += 8.0
 		if sc > bscore:
 			bscore = sc
 			best = t
 	var tlz: Vector3i = best["lz"]
+	memo["tgt"] = tlz
 	var occupy: bool = best.get("occ", false)
 	# punto di raccolta accanto all'obiettivo: si entra solo da adiacenti (senza i +4 della StarGate)
 	var stage := _stage_point(eng, s, tlz, cen)
@@ -131,6 +167,26 @@ func plot(eng, s: int, req: Dictionary) -> Dictionary:
 		if int(r.get("col", 0)) > max_col:
 			var u: Dictionary = eng.units[id]
 			plan[id] = {"c": "", "to": _toward(eng, s, u, plan[id]["to"], plan, true)}
+	# FakerForce (33.0): ogni tanto una StarForce ferma si divide per confondere il nemico
+	if eng.faker_left(s) > 0:
+		for u in mine:
+			var p0: Dictionary = plan.get(u["id"], {})
+			var stay0: bool = not p0.has("to") or p0["to"] == u["lz"]
+			if stay0 and str(p0.get("c", "")) == "" and not u.get("ff", false) and rng.randi_range(0, 3) == 0:
+				plan[u["id"]] = {"c": "F"}
+				break
+	# riserve (32.0): una StarForce che resterebbe ferma su una propria StarGate resta in riserva
+	var nres: int = eng.reserve_max(s)
+	if nres > 0:
+		for u in mine:
+			if nres <= 0:
+				break
+			var p: Dictionary = plan.get(u["id"], {})
+			var stay: bool = not p.has("to") or p["to"] == u["lz"]
+			if stay and str(p.get("c", "")) == "" and not u.get("ff", false) and int(u.get("res_lock", -1)) != eng.turn \
+					and not eng.gate_at(u["lz"], s).is_empty() and rng.randi_range(0, 2) == 0:
+				plan[u["id"]] = {"c": "Rs"}
+				nres -= 1
 	return plan
 
 
@@ -245,7 +301,7 @@ func _toward(eng, s: int, u: Dictionary, target: Vector3i, plan: Dictionary, cau
 		trial[u["id"]] = {"c": "", "to": c}
 		var rp: Dictionary = eng.resolve_plot(s, trial)
 		var r: Dictionary = rp.get(u["id"], {})
-		if r.is_empty():
+		if r.is_empty() or r.get("to") != c:
 			continue
 		var col := int(r.get("col", 9))
 		var limit := 0
@@ -281,9 +337,54 @@ func _nearest_lz(eng, p: Vector3) -> Vector3i:
 				bd = dd
 				best = Hex.lz(h, int(round(p.y)))
 	var lim := Hex.zlimit(Hex.hexof(best))
-	if eng.xeno == 0:
+	if eng.xeno == 0 and not eng.extended:
 		best.z = clampi(best.z, -lim, lim)
 	return best
+
+
+## scenario 16: ogni FakerForce va a tenere un sistema terziario diverso (il più vicino libero),
+## le restanti puntano a Wandering's End
+func _faker_plot(eng, s: int) -> Dictionary:
+	var plan := {}
+	var mine: Array = []
+	for u in eng.live(s, "sf"):
+		if not eng.neutralized(u):
+			mine.append(u)
+	var targets := []
+	for l in eng.star_lz:
+		if eng.star_lz[l]["cls"] != "t" or eng.destroyed_stars.has(l):
+			continue
+		var enemy := false
+		for e in eng.units_at(l):
+			if e["side"] != s and e["kind"] == "sf" and eng.visibility(e, s) != "none":
+				enemy = true
+		if not enemy:
+			targets.append(l)
+	var taken := {}
+	# chi è già su un obiettivo resta
+	for u in mine:
+		if u["lz"] in targets and not taken.has(u["lz"]):
+			taken[u["lz"]] = true
+			plan[u["id"]] = {"c": "", "to": u["lz"]}
+	var we: Vector3i = eng.star_hex_lz(2223)
+	for u in mine:
+		if plan.has(u["id"]):
+			continue
+		var best = null
+		var bd := 1e9
+		for l in targets:
+			if taken.has(l):
+				continue
+			var d := float(Hex.tdist(u["lz"], l)) + rng.randf() * 2.0
+			if d < bd:
+				bd = d
+				best = l
+		if best == null or taken.size() >= 9:
+			best = we
+		else:
+			taken[best] = true
+		plan[u["id"]] = {"c": "", "to": _toward(eng, s, u, best, plan, true)}
+	return plan
 
 
 func _rescue_plot(eng, s: int) -> Dictionary:
@@ -429,6 +530,20 @@ func _enemy_positions(eng, s: int) -> Array:
 	return out
 
 
+## scenario 20: il trasporto tenta la ritirata dal Tactical Display (in modo stellare, seconda fase)
+## con chit 0-1, dal secondo Tac-turno; altrimenti resta fermo con tutta l'anti-proiezione
+func _flee_plan(eng, t, u: Dictionary) -> Dictionary:
+	var id: String = u["id"]
+	var none := {"a1": {"k": ""}, "a2": {"k": ""}}
+	if t.tt < 2 or rng.randi_range(0, 9) > 1:
+		return none
+	var opts: Array = eng.breakoff_options(u)
+	if opts.is_empty():
+		return none
+	var p := {"a1": {"k": "M"} if t.tu[id]["mode"] == "battle" else {"k": ""}, "a2": {"k": "B", "to": opts[0]}}
+	return p if t.check_sf(id, p)["ok"] else none
+
+
 ## migliore direzione di proiezione da `from` con `pts` punti: [ora, verso, valore]
 func best_cast(from: Vector3i, enemies: Array, pts: int) -> Array:
 	var best := [3, 1, 0]
@@ -482,6 +597,43 @@ func tplot(eng, s: int, req: Dictionary) -> Dictionary:
 		var mode: String = t.tu[id]["mode"]
 		var dis: bool = t.is_disrupted(id)
 		var tv: int = t.televalue(id)
+		# scenario 20: il trasporto xenofobo fugge verso il bordo, ma esita secondo un chit
+		if id == t.transport:
+			out[id] = _flee_plan(eng, t, u)
+			continue
+		# nova (31.52): con la StarGate a terra, la StarForce più vicina va alla stella e pianta l'innesco
+		if t.can_trigger(s) and t.gate_down(s) and t.star and not dis:
+			var sp := Vector3i(0, 0, -1)
+			var closest := id
+			var cd := 99
+			for f in mine:
+				if f["kind"] == "sf" and not t.is_disrupted(f["id"]):
+					var dd := Hex.ttrue(t.tu[f["id"]]["pos"], sp)
+					if dd < cd:
+						cd = dd
+						closest = f["id"]
+			if closest == id:
+				var np := {"a1": {"k": ""}, "a2": {"k": ""}}
+				var dsp := Hex.ttrue(pos, sp)
+				if pos == sp and mode == "stellar":
+					np = {"a1": {"k": "N"}, "a2": {"k": ""}}
+				elif mode == "battle":
+					np = {"a1": {"k": "M"}, "a2": {"k": ""}}
+					if dsp == 1:
+						np["a2"] = {"k": "T", "to": sp}
+				elif dsp == 1:
+					np = {"a1": {"k": "T", "to": sp}, "a2": {"k": ""}}
+				else:
+					var step := pos
+					for k in 10:
+						var nx := _tstep(step, sp, t)
+						if Hex.ttrue(nx, sp) < 1 or t.tac_cost(mode, Hex.ttrue(pos, nx), u.get("ff", false)) > tv:
+							break
+						step = nx
+					np = {"a1": {"k": "T", "to": step}, "a2": {"k": ""}}
+				if t.check_sf(id, np)["ok"]:
+					out[id] = np
+					continue
 		# bersaglio: la StarGate nemica se c'è, altrimenti la StarForce nemica più vicina
 		var tgt = null
 		var near := 99
@@ -552,6 +704,18 @@ func tplot(eng, s: int, req: Dictionary) -> Dictionary:
 					dest2 = pos
 				if dest2 != pos:
 					plan = {"a1": {"k": "T", "to": dest2}, "a2": {"k": ""}}
+		# adatta i punti delle proiezioni ai TelePunti (FakerForce, disgregate, equipaggi affaticati)
+		var tries := 0
+		while not t.check_sf(id, plan)["ok"] and tries < 6:
+			tries += 1
+			var changed := false
+			for ph in ["a1", "a2"]:
+				var a: Dictionary = plan[ph]
+				if str(a.get("k", "")) == "C" and int(a.get("p", 0)) > 2:
+					a["p"] = int(a["p"]) / 2
+					changed = true
+			if not changed:
+				break
 		if not t.check_sf(id, plan)["ok"]:
 			plan = {"a1": {"k": ""}, "a2": {"k": ""}}
 		out[id] = plan

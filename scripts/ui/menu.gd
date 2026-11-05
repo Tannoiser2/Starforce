@@ -25,6 +25,7 @@ var on_code: LineEdit
 var on_lbl: Label
 var on_start: Button
 var host_side := 0
+var opz := {}
 
 
 func _ready() -> void:
@@ -36,6 +37,7 @@ func _ready() -> void:
 	who = st.get("who", []).duplicate()
 	names = st.get("names", []).duplicate()
 	fmt = str(st.get("fmt", ""))
+	opz = st.get("opz", {}).duplicate()
 	page = Control.new()
 	page.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	add_child(page)
@@ -95,7 +97,7 @@ func _ready() -> void:
 
 
 func _store() -> void:
-	main.menu_state = {"scenario": scen_id, "style": style, "speed": speed, "who": who.duplicate(), "names": names.duplicate(), "fmt": fmt}
+	main.menu_state = {"scenario": scen_id, "style": style, "speed": speed, "who": who.duplicate(), "names": names.duplicate(), "fmt": fmt, "opz": opz.duplicate()}
 
 
 func _refresh() -> void:
@@ -158,9 +160,11 @@ func _refresh() -> void:
 		var b := UI.button(f[1] + ("  (consigliato)" if key == sc["formato"] else ""), 0, 44, 17)
 		if key == fmt:
 			b.add_theme_stylebox_override("normal", UI.box(Color("#5a1d36"), UI.YELLOW, 2, 6))
-		if sc.has("xeno") and key == "avanzato":
+		if sc.has("formati") and not key in sc["formati"]:
 			b.disabled = true
-			b.tooltip_text = "Gli scenari xenofobi si giocano con il gioco base (come consiglia il regolamento)."
+			b.tooltip_text = "Questo scenario si gioca solo nel formato indicato."
+		elif sc.has("xeno") and key == "avanzato":
+			b.tooltip_text = "Il regolamento consiglia il gioco base per gli Xenofobi; nel gioco avanzato la nova si innesca sul Tactical Display (31.52)."
 		b.pressed.connect(func():
 			fmt = key
 			_refresh())
@@ -181,6 +185,10 @@ func _refresh() -> void:
 		l.custom_minimum_size.x = 260
 		r.add_child(l)
 		var k := i
+		if sd.get("neutrale", false) or (sc.get("solitario", false) and sc.has("solo_umano") and i != int(sc["solo_umano"])):
+			who[i] = 1
+			r.add_child(UI.label("si schiera durante la partita" if sd.get("neutrale", false) else "IA", 17, UI.MUTED))
+			continue
 		for opt in [[0, "Persona"], [1, "IA"]]:
 			var v: int = opt[0]
 			var b := UI.button(opt[1], 120, 42, 17)
@@ -203,6 +211,28 @@ func _refresh() -> void:
 			hum += 1
 	if hum >= 2:
 		detail.add_child(UI.wrap(UI.label("Più persone sullo stesso dispositivo: i piani sono segreti, e prima di ogni scelta lo schermo chiede di passare il dispositivo.", 16, UI.MUTED), 1000))
+	# regole opzionali (32.0-36.0)
+	if not sc.get("solitario", false) and not sc.get("senza_opzioni", false):
+		detail.add_child(UI.head("Regole opzionali", 18, UI.YELLOW))
+		var ro := HFlowContainer.new()
+		ro.add_theme_constant_override("h_separation", 8)
+		ro.add_theme_constant_override("v_separation", 6)
+		detail.add_child(ro)
+		var forced: Array = sc.get("opzioni", [])
+		for k in D.OPTIONS:
+			var key3: String = k
+			var cb := CheckBox.new()
+			cb.text = D.OPTIONS[k][0]
+			cb.tooltip_text = D.OPTIONS[k][1]
+			cb.add_theme_font_size_override("font_size", 16)
+			if key3 in forced:
+				cb.button_pressed = true
+				cb.disabled = true
+				cb.tooltip_text += " (sempre attiva in questo scenario)"
+			else:
+				cb.button_pressed = bool(opz.get(key3, false))
+				cb.toggled.connect(func(v): opz[key3] = v)
+			ro.add_child(cb)
 	# grafica
 	detail.add_child(UI.head("Grafica e ritmo", 18, UI.YELLOW))
 	var rg := HBoxContainer.new()
@@ -244,7 +274,11 @@ func _config() -> Dictionary:
 	var seats := []
 	for i in sc["lati"].size():
 		seats.append({"name": str(names[i]).strip_edges(), "ai": who[i] == 1, "level": 1})
-	return {"scenario": scen_id, "mode": fmt, "seats": seats, "style": style, "anim": speed, "ai_delay": 0.5 / speed}
+	var on := {}
+	for k in opz:
+		if opz[k] and not k in sc.get("opzioni", []):
+			on[k] = true
+	return {"scenario": scen_id, "mode": fmt, "seats": seats, "style": style, "anim": speed, "ai_delay": 0.5 / speed, "opzioni": on}
 
 
 func _on_start() -> void:

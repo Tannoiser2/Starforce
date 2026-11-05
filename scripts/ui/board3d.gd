@@ -470,8 +470,8 @@ func _build_static() -> void:
 		static_root.add_child(q)
 	else:
 		static_root.add_child(_grid_mesh())
-	# stelle
-	for st in D.STARS:
+	# stelle (quelle della mappa più quelle dello scenario)
+	for st in (eng.star_list if eng != null and not eng.star_list.is_empty() else D.STARS):
 		var l := Hex.lz(int(st[0]), int(st[1]))
 		var n := _star_node(l, st[2], st[3])
 		static_root.add_child(n)
@@ -765,7 +765,7 @@ func _refresh_units(snap) -> void:
 				hidden_done[key] = true
 			var neut: bool = (snap[id][1] == 1) if snap != null else eng.neutralized(u)
 			var n: Node3D = unit_nodes.get(id, null)
-			var sig := "%s|%s|%s|%d|%d" % [vis, style, u["kind"], 1 if neut else 0, l.z]
+			var sig := "%s|%s|%s|%d|%d|%s" % [vis, style, u["kind"], 1 if neut else 0, l.z, str(u.get("ff", false))]
 			if n == null or n.get_meta("sig", "") != sig:
 				var oldp = null
 				if n != null:
@@ -826,7 +826,11 @@ func _stack_tags(stacks: Dictionary, seen: Dictionary, where: Dictionary) -> voi
 				if eng.units[id]["kind"] == "gate":
 					has_gate = true
 				else:
-					letters.append(str(eng.units[id]["label"]))
+					var uu: Dictionary = eng.units[id]
+					var lab := str(uu["label"])
+					if uu.get("ff", false) and (uu["side"] == viewer or viewer == -2 or uu.get("ff_known", false)):
+						lab = lab.to_lower()
+					letters.append(lab)
 			var l: Vector3i = where[ids[0]]
 			if has_gate and not letters.is_empty() and style != "originale":
 				# la StarGate ha la sua etichetta, più in basso; le StarForce sopra
@@ -919,7 +923,8 @@ func _unit_node(u: Dictionary, vis: String, l: Vector3i, neut: bool) -> Node3D:
 			model = Ships.gate_model(u["race"], col)
 		else:
 			model = Ships.fleet(u["race"], col, 1)
-			model.scale = Vector3.ONE * 1.25
+			var known_ff: bool = u.get("ff", false) and (u["side"] == viewer or viewer == -2 or u.get("ff_known", false))
+			model.scale = Vector3.ONE * (0.8 if known_ff else 1.25)
 		body.add_child(model)
 		if neut:
 			Ships.dim(model)

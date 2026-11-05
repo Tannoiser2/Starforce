@@ -132,6 +132,30 @@ Ogni scenario indica le StarGate e le StarForce di ogni giocatore e le condizion
 
 Una stella terziaria scelta a caso sta per esplodere. Dodici StarForce devono portare via 60 punti popolazione: per caricarne uno una StarForce vuota deve iniziare e finire il turno nella LiteZulu della stella (ordine **Carica / scarica**); per sbarcarlo deve iniziare e finire il turno nella LiteZulu di un altro sistema. Ogni turno si pesca dal sacchetto della nova: con due zeri di fila la stella esplode. Un punto per ogni punto popolazione salvato, tre in meno per ogni StarForce perduta: 60 vittoria decisiva, 50-59 sostanziale, 40-49 marginale.
 
+## Le regole opzionali
+
+Si attivano nel menu, sotto **Regole opzionali**; alcuni scenari ne attivano qualcuna da soli.
+
+- **StarForce di riserva (32.0)**: fino a un terzo delle tue StarForce (almeno una) può restare **in riserva** invece di muoversi. Dopo gli spostamenti, quando si sa dove si combatte, scegli dove mandarle: arrivano dal secondo segmento (gioco base, con forza 2) o dal terzo Tac-turno (gioco avanzato, in modo stellare, solo con azioni della seconda fase), sulla posizione di un'unità amica. Possono sforare la portata. Il turno dopo una StarForce che è stata in riserva non può spostarsi. Se il nemico arriva proprio dove la riserva aspetta, la riserva è annullata e combatte lì.
+- **FakerForce (33.0)**: una StarForce ferma si può dividere in **quattro FakerForce** di una sola TeleNave (al massimo il 10% delle tue StarForce). Il nemico le vede come StarForce vere finché non sono in una LiteZulu contesa, sul Tactical Display o accanto a una sua StarGate. Una FakerForce vale un quarto di StarForce per la capacità delle StarGate e per le perdite, mezzo punto nel combattimento base; sul Tactical Display ha 8 TelePunti in modo stellare e 16 in battaglia. Rinforza solo un'altra FakerForce. Quattro FakerForce nella stessa LiteZulu non contesa si possono **riunire**.
+- **GateLink (34.0)**: tra due tue StarGate collegate da una catena di StarGate amiche della stessa razza, ognuna entro **20 Lite** dalla successiva, lo spostamento è sicuro qualunque sia la distanza (codice GL). Tutte le StarGate della catena usano la loro capacità. Il gioco lo sceglie da solo quando serve.
+- **Continuità della situazione (35.0)**: un combattimento non risolto dopo sei segmenti (o dodici Tac-turni) non finisce con la ritirata obbligata ma **prosegue nel turno seguente** (dodici segmenti o ventiquattro Tac-turni per turno); chi arriva si unisce. Le StarGate coinvolte non aiutano gli spostamenti.
+- **Fatica degli equipaggi (36.0)**: una StarForce che passa due turni di fila in **modo battaglia** (nel gioco base: che combatte con forza 3) il turno dopo aggiunge **2 Lite** ai suoi spostamenti e rinforzi (non GS e GGS), deve tenere almeno un punto in difesa e non può proiettare più di metà dei TelePunti. Dopo tre turni di fila resta **neutralizzata** per un turno.
+
+## La nova nel gioco avanzato (31.52)
+
+Per far esplodere una stella sul Tactical Display: la StarGate del sistema deve essere **disgregata o neutralizzata**; una StarForce in **modo stellare** deve iniziare il Tac-turno nel MiniLite della stella (**000/-1**, ci si arriva solo da un MiniLite di distanza) e scegliere **Innesca la nova** nella prima fase: costa metà dei TelePunti e occupa tutto il Tac-turno. Se alla fine del Tac-turno non è stata disgregata, l'innesco è piantato e la stella esplode nella prima fase del Tac-turno seguente, distruggendo chi è rimasto nel suo MiniLite. Il sistema è distrutto alla fine della sequenza tattica.
+
+## Gli scenari del XXX secolo (15-20)
+
+Da **Beyond 3000** (Moves): compare **Wandering's End** (2223/+8), il sistema natale dei Wanderers.
+
+- **15, la terza incursione xenofoba**: regole degli Xenofobi, punteggi più alti; dopo la prima stella della Lega distrutta arrivano quattro StarForce in più.
+- **16, la guerra delle FakerForce**: tre giocatori, tutte le StarForce divise in FakerForce, che non possono entrare nelle LiteZulu delle StarGate nemiche. La prima volta che una FakerForce entra in un sistema altrui si pesca un chit: con 8 o 9 viene randomizzata.
+- **17, 18, 19**: i RxPexy e l'Unione dei Senzienti hanno **sistemi esterni**, fuori dal Volume conosciuto (che si estende di dieci Lite in altezza). Nel 18 Lega e RxPexy non si attaccano fino al turno 4 e Unione e RxPexy non sono nemici. Nel 19 la Lega è ferma finché a fine turno non esce un 9, e gli **incrociatori a tachioni** RxPexy si muovono di due Lite per turno, senza difesa, e neutralizzano per sempre una StarGate inattiva entrandoci.
+- **20, Operazione Cartagine**: solitario sul Tactical Display del sistema natale xenofobo; bisogna innescare la nova prima che il trasporto si ritiri dal display.
+- **21, la guerra per l'identità a due**: la Lega Umana è inattiva; ogni turno i due giocatori pescano un chit politico (dal 0 al 9, senza rimetterlo) e chi arriva a 23 ne prende il comando. Chi perde una StarGate coloniale prima salta la pesca seguente.
+
 ## Comandi della versione digitale
 
 - **Telecamera**: trascina per ruotare, rotella o pizzico per avvicinare, tasto destro (o Maiusc + trascina, o due dita) per spostare la vista; da tastiera Q ed E ruotano, le frecce spostano, + e - avvicinano. Il pulsante **Vista dall'alto** mostra la mappa piatta come quella di carta, con la quota Zulu accanto a stelle e flotte; **Centra** riporta la vista sulle tue forze.
