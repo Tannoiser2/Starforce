@@ -4,6 +4,8 @@ extends Control
 ## piani dei Tac-turni), registro in basso, sipario per il gioco a turno sullo stesso dispositivo,
 ## risultato finale con replay dell'intera partita.
 
+const TV := preload("res://scripts/ui/tables_view.gd")
+
 const D = preload("res://scripts/data/sf_data.gd")
 const FxScript = preload("res://scripts/ui/fx.gd")
 
@@ -55,6 +57,7 @@ var tpick := ""          # "a1" / "a2" mentre si sceglie la destinazione di un T
 # replay
 var replay_i := -1
 var replay_play := false
+var replay_lab: Label
 
 
 func _ready() -> void:
@@ -230,6 +233,9 @@ func _build_ui() -> void:
 	var bl := UI.button("Registro", 0, 42, 17)
 	bl.pressed.connect(_toggle_log)
 	hb.add_child(bl)
+	var bt := UI.button("Tabelle", 0, 42, 17)
+	bt.pressed.connect(func(): show_tables())
+	hb.add_child(bt)
 	var br := UI.button("Regole", 0, 42, 17)
 	br.pressed.connect(_show_rules_overlay)
 	hb.add_child(br)
@@ -721,7 +727,8 @@ func _plot_detail(id: String) -> String:
 	if int(r["col"]) == 0:
 		t += "\nArrivo sicuro."
 	else:
-		t += "\nOltre-spostamento, colonna %s: rischio di spostamento a specchio o di randomizzazione." % eng.col_name(int(r["col"]))
+		var od: Dictionary = TV.overshift_odds(int(r["col"]))
+		t += "\nOltre-spostamento, colonna %s. Su 10 chit: %d arriva, %d a specchio, %d randomizzata%s." % [eng.col_name(int(r["col"])), od["S"], od["M"], od["R"], " (persa)" if eng.mode == "base" and od["R"] > 0 else ""]
 	if str(r.get("err", "")) != "":
 		t += "\n" + str(r["err"])
 	return t
@@ -1237,7 +1244,8 @@ func _sf_editor(id: String) -> void:
 					z2.pressed.connect(func(): _bump_z(1))
 					rz.add_child(z2)
 			"C":
-				_cast_editor(a, func(): _tplot_panel())
+				var org: Vector3i = t.tu[id]["pos"] if ph == "a1" or str(p["a1"].get("k", "")) != "T" else p["a1"]["to"]
+				_cast_editor(a, func(): _tplot_panel(), false, Callable(), org)
 			"B":
 				var bo2: Array = eng.breakoff_options(eng.units[id])
 				var ob2 := OptionButton.new()
@@ -1251,7 +1259,41 @@ func _sf_editor(id: String) -> void:
 				r.add_child(ob2)
 
 
-func _cast_editor(a: Dictionary, done: Callable, removable := false, on_remove := Callable()) -> void:
+var cast_tab_open := false
+
+
+## cosa colpisce la proiezione `a` partendo da `org`, fra le unità nemiche di cui si conosce la posizione
+func _cast_info(a: Dictionary, org: Vector3i) -> void:
+	var t = eng.tac
+	var p := int(a.get("p", 16))
+	var vol: Dictionary = Hex.cast_volume(org, int(a.get("cl", 3)), int(a.get("zs", 1)))
+	var dist := []
+	for d in 6:
+		if (p >> d) > 0:
+			dist.append("%d: %d" % [d, p >> d])
+	var hits := []
+	for u in t.units():
+		if not eng.hostile(seat, u["side"]):
+			continue
+		var kp = t.known_pos(u, seat)
+		if kp != null and vol.has(kp) and (p >> int(vol[kp])) > 0:
+			hits.append("%s a distanza %d con %d" % [eng.uname(u), int(vol[kp]), p >> int(vol[kp])])
+	_note("Forza secondo la distanza in MiniLite: " + ", ".join(dist) + ".", UI.MUTED, 14)
+	if hits.is_empty():
+		_note("Nel cuneo non c'è nessuna unità nemica di cui conosci la posizione.", UI.MUTED, 14)
+	else:
+		_note("Colpisce " + "; ".join(hits) + ". Sulla tabella conta la somma di tutte le proiezioni su quell'unità meno la sua anti-proiezione.", UI.YELLOW_L, 14)
+	var bt := UI.button("Nascondi la tabella delle proiezioni" if cast_tab_open else "Mostra la tabella delle proiezioni", 0, 34, 14)
+	bt.pressed.connect(func():
+		cast_tab_open = not cast_tab_open
+		_tplot_panel())
+	act_box.add_child(bt)
+	if cast_tab_open:
+		act_box.add_child(TV.cast_table(-1, 40))
+		_note("Colonna: proiezioni ricevute meno anti-proiezione. D disgregata, R randomizzata (StarGate: disgregata).", UI.MUTED, 13)
+
+
+func _cast_editor(a: Dictionary, done: Callable, removable := false, on_remove := Callable(), org = null) -> void:
 	var r := _row()
 	r.add_child(UI.label("Punti", 15))
 	var ob := OptionButton.new()
@@ -1282,6 +1324,8 @@ func _cast_editor(a: Dictionary, done: Callable, removable := false, on_remove :
 			a["cl"] = clv
 			done.call())
 		r2.add_child(b)
+	if org is Vector3i and eng.tac != null:
+		_cast_info(a, org)
 
 
 func _gate_editor(id: String) -> void:
@@ -1301,7 +1345,7 @@ func _gate_editor(id: String) -> void:
 			var k := i
 			_cast_editor(lst[i], func(): _tplot_panel(), true, func():
 				lst.remove_at(k)
-				_tplot_panel())
+				_tplot_panel(), t.tu[id]["pos"])
 		var badd := UI.button("Aggiungi una proiezione", 240, 38, 15)
 		badd.pressed.connect(func():
 			var used := {}
@@ -1617,6 +1661,18 @@ func _toggle_log() -> void:
 	sc.add_child(r)
 
 
+func show_tables(t := "") -> void:
+	var tv = preload("res://scripts/ui/tables_view.gd").new()
+	tv.outleap = eng.eco != null
+	if t != "":
+		tv.tab = t
+	elif eng.tac != null:
+		tv.tab = "tattico"
+	elif req.get("type", "") == "alloc":
+		tv.tab = "combattimento"
+	add_child(tv)
+
+
 func _show_rules_overlay() -> void:
 	var rv = preload("res://scripts/ui/rules_view.gd").new()
 	rv.overlay = true
@@ -1690,11 +1746,14 @@ func _on_end(res: Dictionary) -> void:
 
 func _start_replay() -> void:
 	board.show_tactical(false)
+	if is_instance_valid(result_box):
+		result_box.visible = false
 	_clear(act_box)
 	act_panel.visible = true
 	_panel("Replay della partita")
 	_note("Tutte le posizioni, senza segreti. Il replay riparte da capo quando finisce.", UI.MUTED, 15)
 	var lab := UI.head("", 18, UI.YELLOW)
+	replay_lab = lab
 	act_box.add_child(lab)
 	var sl := HSlider.new()
 	sl.min_value = 0
@@ -1712,23 +1771,62 @@ func _start_replay() -> void:
 		replay_play = not replay_play
 		bp.text = "Pausa" if replay_play else "Riprendi")
 	sl.value_changed.connect(func(v):
+		replay_i = int(v)
 		_replay_show(int(v), lab))
+	# salto da una battaglia all'altra
+	var r2 := _row()
+	var jump := func(dir: int):
+		var n: int = eng.history.size()
+		var i: int = replay_i
+		for _k in n:
+			i = (i + dir + n) % n
+			var k: String = str(eng.history[i].get("k", ""))
+			if k == "combat" or k == "tac_start":
+				break
+		replay_i = i
+		sl.set_value_no_signal(i)
+		_replay_show(i, lab)
+	var bb := UI.button("Battaglia precedente", 0, 40, 15)
+	bb.pressed.connect(func(): jump.call(-1))
+	r2.add_child(bb)
+	var bn := UI.button("Battaglia successiva", 0, 40, 15)
+	bn.pressed.connect(func(): jump.call(1))
+	r2.add_child(bn)
 	replay_i = 0
 	while is_inside_tree():
 		if replay_play:
 			replay_i = (replay_i + 1) % maxi(1, eng.history.size())
 			sl.set_value_no_signal(replay_i)
 			_replay_show(replay_i, lab)
-		await get_tree().create_timer(0.45).timeout
+		var k: String = str(eng.history[replay_i].get("k", "")) if replay_i < eng.history.size() else ""
+		await get_tree().create_timer(1.7 if k == "tac_cast" else (1.1 if k in ["tac_result", "tac_start", "shift"] else 0.45)).timeout
 
 
 func _replay_show(i: int, lab: Label) -> void:
 	if i < 0 or i >= eng.history.size():
 		return
 	var seg: Dictionary = eng.history[i]
-	lab.text = "Turno %d  |  %s" % [int(seg.get("turn", 0)), {"start": "inizio", "shift": "spostamenti", "combat": "combattimento", "segment": "segmento di combattimento", "turn_end": "fine turno", "tac_start": "combattimento tattico", "nova": "nova!", "gate_lost": "StarGate neutralizzata", "end": "fine"}.get(seg["k"], seg["k"])]
+	var nomi := {"start": "inizio", "shift": "spostamenti", "combat": "combattimento", "segment": "segmento di combattimento",
+		"after_segment": "combattimento", "combat_end": "fine del combattimento", "turn_end": "fine turno",
+		"tac_start": "Tactical Display: schieramento", "tac_move": "Tactical Display: Tac-spostamenti",
+		"tac_cast": "Tactical Display: proiezioni", "tac_result": "Tactical Display: risultati",
+		"tac_turn": "Tactical Display: fine Tac-turno", "tac_end": "fine del combattimento tattico",
+		"nova": "nova!", "gate_lost": "StarGate neutralizzata", "end": "fine", "deploy": "schieramento",
+		"year_end": "fine dell'anno", "politics": "politica", "activate": "attivazione", "debark": "sbarco",
+		"xeno_found": "Xenofobi scoperti"}
+	var t := "Turno %d  |  %s" % [int(seg.get("turn", 0)), nomi.get(seg["k"], seg["k"])]
+	if seg.has("tac"):
+		var stn: Dictionary = eng.star_at(seg["lz"])
+		t += "\n%s%s" % [Hex.fmt(seg["lz"]), (" " + str(stn["name"])) if stn.has("name") else ""]
+		if seg["k"] in ["tac_move", "tac_cast", "tac_result"]:
+			t += ", fase %d" % int(seg.get("ph", 1))
+	lab.text = t
 	board.show_snapshot(seg["u"])
-	if seg["k"] in ["shift", "segment", "nova", "gate_lost"]:
+	if seg.has("tac"):
+		board.show_tac_snapshot(seg["lz"], seg["tac"])
+	else:
+		board.show_tac_snapshot(Vector3i.ZERO, null)
+	if seg["k"] in ["shift", "segment", "nova", "gate_lost", "tac_cast", "tac_result"]:
 		fx.play(seg["k"], seg)
 
 

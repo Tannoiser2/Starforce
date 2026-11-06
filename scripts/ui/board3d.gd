@@ -1198,6 +1198,26 @@ func _arc(a: Vector3, b: Vector3, col: Color, segs := 24) -> Node3D:
 
 const TAC_SCALE := 2.2
 
+## replay: Tactical Display ricostruito da un'istantanea registrata (eng.tac non c'è più)
+var tac_snap = null
+var tac_lz := Vector3i.ZERO
+
+
+func show_tac_snapshot(lz: Vector3i, snap) -> void:
+	if snap == null:
+		tac_snap = null
+		if tactical:
+			show_tactical(false)
+		return
+	var fresh: bool = tac_snap == null or not tactical or lz != tac_lz
+	tac_snap = snap
+	tac_lz = lz
+	if fresh:
+		show_tactical(true)
+	else:
+		refresh_tac()
+
+
 func show_tactical(on: bool) -> void:
 	tactical = on
 	tac_root.visible = on
@@ -1293,7 +1313,13 @@ func build_tactical() -> void:
 		tac_root.add_child(lz)
 	tac_root.add_child(_stem(Vector3(-9.6 * TAC_SCALE * 0.5 - 0.6, -5 * TAC_SCALE, 0), Vector3(-9.6 * TAC_SCALE * 0.5 - 0.6, 5 * TAC_SCALE, 0), Color(1, 0.85, 0.3, 0.4), 0.03))
 	# stella del sistema a 000/-1
-	if eng.tac != null and eng.tac.star:
+	var star_l = null
+	if tac_snap != null:
+		if not eng.star_at(tac_lz).is_empty():
+			star_l = tac_lz
+	elif eng.tac != null and eng.tac.star:
+		star_l = eng.tac.l
+	if star_l != null:
 		var st := MeshInstance3D.new()
 		var sm := SphereMesh.new()
 		sm.radius = 0.55
@@ -1301,7 +1327,7 @@ func build_tactical() -> void:
 		sm.radial_segments = 32
 		sm.rings = 16
 		st.mesh = sm
-		var stn: Dictionary = eng.star_at(eng.tac.l)
+		var stn: Dictionary = eng.star_at(star_l)
 		var tp := D.star_type(str(stn.get("name", "")), str(stn.get("cls", "t")))
 		var pal: Array = D.STAR_COLORS[tp]
 		var smt := ShaderMaterial.new()
@@ -1364,6 +1390,9 @@ func _hover_tac(sp: Vector2) -> void:
 
 
 func refresh_tac() -> void:
+	if tac_snap != null:
+		_refresh_tac_snap()
+		return
 	if eng.tac == null:
 		return
 	var t = eng.tac
@@ -1404,6 +1433,46 @@ func refresh_tac() -> void:
 		var sel = n.get_node_or_null("sel")
 		if sel != null:
 			sel.visible = id == selected
+	for c in tac_units.get_children():
+		if not alive.has(str(c.name)):
+			c.queue_free()
+			tac_pos.erase(str(c.name))
+	if top_view:
+		_fix_labels(tac_root)
+
+
+func _refresh_tac_snap() -> void:
+	var alive := {}
+	var stack := {}
+	for id in tac_snap:
+		if str(tac_snap[id][4]) == "" and eng.units.has(id):
+			stack[tac_snap[id][0]] = int(stack.get(tac_snap[id][0], 0)) + 1
+	var placed := {}
+	for id in tac_snap:
+		var e: Array = tac_snap[id]
+		if str(e[4]) != "" or not eng.units.has(id):
+			continue
+		var u: Dictionary = eng.units[id]
+		alive[id] = true
+		var pos: Vector3i = e[0]
+		var n: Node3D = tac_units.get_node_or_null(id)
+		var sig := "snap|%s|%s|%s|%s|%d" % [e[1], e[2], e[3], style, pos.z]
+		if n == null or n.get_meta("sig", "") != sig:
+			if n != null:
+				n.free()
+			n = _tac_node(u, true, str(e[1]), bool(e[2]), bool(e[3]), pos.z)
+			n.name = id
+			n.set_meta("sig", sig)
+			tac_units.add_child(n)
+			n.position = tac_world(pos)
+		var off := Vector3.ZERO
+		var cnt: int = stack.get(pos, 1)
+		if cnt > 1 and u["kind"] == "sf":
+			var k: int = placed.get(pos, 0)
+			placed[pos] = k + 1
+			var ang := TAU * float(k) / float(cnt)
+			off = Vector3(cos(ang) * 0.75, 0.0, sin(ang) * 0.75)
+		tac_pos[id] = tac_world(pos) + off
 	for c in tac_units.get_children():
 		if not alive.has(str(c.name)):
 			c.queue_free()

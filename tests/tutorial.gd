@@ -86,6 +86,10 @@ func _init() -> void:
 						g.tplan[id]["a2"] = {"k": "C", "p": 16, "cl": 3, "zs": 1}
 				if wt == "move":
 					print("    piano IA: ", g.tplan)
+				if OS.get_environment("CASTSHOT") != "":
+					g._tplot_panel()
+					await create_timer(0.5).timeout
+					root.get_viewport().get_texture().get_image().save_png(OS.get_environment("CASTSHOT"))
 			else:
 				g._provide(g.tplan.duplicate(true))
 		elif r == "xsign":

@@ -212,13 +212,17 @@ func _casts(seg: Dictionary) -> void:
 
 
 func _tac_hits(seg: Dictionary) -> void:
-	if eng.tac == null:
-		return
+	var snap: Dictionary = seg.get("tac", {})
 	for o in seg.get("out", []):
 		var id: String = o["id"]
-		if not eng.tac.tu.has(id):
+		var tp
+		if snap.has(id):
+			tp = snap[id][0]
+		elif eng.tac != null and eng.tac.tu.has(id):
+			tp = eng.tac.tu[id]["pos"]
+		else:
 			continue
-		var p: Vector3 = board.tac_world(eng.tac.tu[id]["pos"])
+		var p: Vector3 = board.tac_world(tp)
 		match str(o["res"]):
 			"D":
 				_flash(p, Color(1, 0.9, 0.2), 2.0)

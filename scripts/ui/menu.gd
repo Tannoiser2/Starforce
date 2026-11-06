@@ -28,6 +28,27 @@ var host_side := 0
 var opz := {}
 
 
+## scenari raggruppati per periodo e tipo, nell'ordine in cui conviene scoprirli
+const GROUPS := [
+	["Per cominciare", "Due lati, poche flotte: il modo migliore per imparare.", [1, 2, 3]],
+	["Le guerre del XXV secolo", "La frontiera si allarga: EPU, Lega Umana, L'Chal-Dah e Rame.", [4, 5, 6, 7, 8, 9, 10]],
+	["Tre fazioni", "Alleanze che cambiano: per tre persone, o due con la terza fazione politica.", [11, 21, 12]],
+	["Gli Xenofobi", "Un nemico sconosciuto che può far esplodere le stelle.", [13, 14, 15]],
+	["Il futuro remoto", "XXX-XXXV secolo: FakerForce, incrociatori a tachioni, mappa estesa.", [16, 17, 18, 19]],
+	["Outleap", "La campagna economica: colonie, commerci e guerre per un secolo.", [100, 101]],
+	["Solitari", "Una missione contro il gioco stesso.", [38, 20]],
+]
+const FMT_DESC := {
+	"base": "Il combattimento si risolve con la tabella dei risultati: le unità colpite sono eliminate. Partite rapide.",
+	"modificato": "Come il base, ma le unità colpite o fuori rotta vengono randomizzate: finiscono in un punto a caso del Volume invece di sparire.",
+	"avanzato": "Ogni scontro si gioca sul Tactical Display: manovre, modi di volo e proiezioni. Più lungo e più ricco.",
+}
+
+var right_scroll: ScrollContainer
+var foot: VBoxContainer
+var list_scroll: ScrollContainer
+
+
 func _ready() -> void:
 	set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	var st: Dictionary = main.menu_state
@@ -41,83 +62,185 @@ func _ready() -> void:
 	page = Control.new()
 	page.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	add_child(page)
-	var root := HBoxContainer.new()
-	root.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	root.offset_left = 40
-	root.offset_right = -40
-	root.offset_top = 30
-	root.offset_bottom = -30
-	root.add_theme_constant_override("separation", 30)
-	page.add_child(root)
-	# colonna sinistra: logo e scenari
-	var left := VBoxContainer.new()
-	left.custom_minimum_size = Vector2(560, 0)
-	left.add_theme_constant_override("separation", 6)
-	root.add_child(left)
-	left.add_child(UI.title("StarForce", 86))
-	left.add_child(UI.head("ALPHA CENTAURI", 26, UI.YELLOW_L))
-	left.add_child(UI.label("Conflitto interstellare nel XXV secolo  |  SPI 1974, Redmond A. Simonsen", 18, UI.PINK_L))
-	var bt := UI.primary(UI.button("Prima volta? Tutorial guidati", 0, 56, 21))
+	var outer := VBoxContainer.new()
+	outer.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	outer.offset_left = 40
+	outer.offset_right = -40
+	outer.offset_top = 20
+	outer.offset_bottom = -24
+	outer.add_theme_constant_override("separation", 14)
+	page.add_child(outer)
+	# testata: logo a sinistra, azioni generali a destra
+	var head := HBoxContainer.new()
+	head.add_theme_constant_override("separation", 14)
+	outer.add_child(head)
+	var logo := VBoxContainer.new()
+	logo.add_theme_constant_override("separation", 0)
+	head.add_child(logo)
+	var lt := HBoxContainer.new()
+	lt.add_theme_constant_override("separation", 18)
+	logo.add_child(lt)
+	lt.add_child(UI.title("StarForce", 64))
+	var sub := UI.head("ALPHA CENTAURI", 24, UI.YELLOW_L)
+	sub.size_flags_vertical = Control.SIZE_SHRINK_END
+	lt.add_child(sub)
+	logo.add_child(UI.label("Conflitto interstellare nel XXV secolo  |  SPI 1974, Redmond A. Simonsen", 16, UI.PINK_L))
+	var sp := Control.new()
+	sp.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	head.add_child(sp)
+	var acts := HBoxContainer.new()
+	acts.add_theme_constant_override("separation", 10)
+	acts.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	head.add_child(acts)
+	var bt := UI.primary(UI.button("Tutorial guidati", 0, 52, 19))
 	bt.tooltip_text = "Partite brevi contro l'IA, spiegate passo per passo"
 	bt.pressed.connect(_tutorial_panel)
-	left.add_child(bt)
-	left.add_child(UI.hsep())
-	var sc := ScrollContainer.new()
-	sc.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	sc.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
-	left.add_child(sc)
-	list_box = VBoxContainer.new()
-	list_box.add_theme_constant_override("separation", 4)
-	list_box.custom_minimum_size = Vector2(540, 0)
-	sc.add_child(list_box)
-	var row := HBoxContainer.new()
-	row.add_theme_constant_override("separation", 10)
-	left.add_child(row)
-	var br := UI.button("Regole", 170, 50, 19)
+	acts.add_child(bt)
+	var br := UI.button("Regole", 0, 52, 19)
 	br.pressed.connect(func():
 		_store()
 		main.show_rules())
-	row.add_child(br)
-	var bl := UI.button("Carica una partita", 230, 50, 19)
+	acts.add_child(br)
+	var bl := UI.button("Carica una partita", 0, 52, 19)
+	bl.tooltip_text = "Riprendi una partita salvata con il suo codice"
 	bl.pressed.connect(_load_panel)
-	row.add_child(bl)
-	# colonna destra: dettagli e opzioni
+	acts.add_child(bl)
+	var bj := UI.button("Entra in una partita online", 0, 52, 19)
+	bj.tooltip_text = "Hai ricevuto un codice da un amico? Entra da qui"
+	bj.pressed.connect(_online_join_panel)
+	acts.add_child(bj)
+	# corpo: elenco degli scenari | scheda dello scenario scelto
+	var root := HBoxContainer.new()
+	root.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	root.add_theme_constant_override("separation", 24)
+	outer.add_child(root)
+	var left := PanelContainer.new()
+	left.add_theme_stylebox_override("panel", UI.panel_style(0.8))
+	left.custom_minimum_size = Vector2(580, 0)
+	root.add_child(left)
+	var lv := VBoxContainer.new()
+	lv.add_theme_constant_override("separation", 6)
+	left.add_child(lv)
+	lv.add_child(UI.head("1. Scegli uno scenario", 22, UI.YELLOW))
+	list_scroll = ScrollContainer.new()
+	list_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	list_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	lv.add_child(list_scroll)
+	list_box = VBoxContainer.new()
+	list_box.add_theme_constant_override("separation", 4)
+	list_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	list_scroll.add_child(list_box)
 	var right := PanelContainer.new()
 	right.add_theme_stylebox_override("panel", UI.panel_style(0.86))
 	right.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	root.add_child(right)
-	var rs := ScrollContainer.new()
-	rs.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
-	right.add_child(rs)
+	var rv := VBoxContainer.new()
+	rv.add_theme_constant_override("separation", 10)
+	right.add_child(rv)
+	right_scroll = ScrollContainer.new()
+	right_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	right_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	rv.add_child(right_scroll)
 	detail = VBoxContainer.new()
 	detail.add_theme_constant_override("separation", 10)
 	detail.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	rs.add_child(detail)
+	right_scroll.add_child(detail)
+	# piede fisso: riepilogo e pulsanti di avvio, sempre visibili
+	rv.add_child(UI.hsep())
+	foot = VBoxContainer.new()
+	foot.add_theme_constant_override("separation", 8)
+	rv.add_child(foot)
 	_refresh()
+	_scroll_to_selected.call_deferred()
+
+
+func _scroll_to_selected() -> void:
+	await get_tree().process_frame
+	for c in list_box.get_children():
+		if c.has_meta("sid") and int(c.get_meta("sid")) == scen_id:
+			list_scroll.ensure_control_visible(c)
 
 
 func _store() -> void:
 	main.menu_state = {"scenario": scen_id, "style": style, "speed": speed, "who": who.duplicate(), "names": names.duplicate(), "fmt": fmt, "opz": opz.duplicate()}
 
 
+func _sel_style(b: Button) -> void:
+	b.add_theme_stylebox_override("normal", UI.box(Color("#5a1d36"), UI.YELLOW, 2, 6))
+	b.add_theme_stylebox_override("hover", UI.box(Color("#6a2440"), UI.YELLOW_L, 2, 6))
+	b.add_theme_color_override("font_color", UI.YELLOW_L)
+
+
+## giocatori e altre etichette brevi di uno scenario
+func _tags(sc: Dictionary) -> String:
+	var t := []
+	if sc.get("solitario", false):
+		t.append("solitario")
+	else:
+		var n: int = int(sc.get("giocatori", sc["lati"].size()))
+		t.append("%d giocatori" % n)
+	t.append({"base": "base", "modificato": "base + random.", "avanzato": "avanzato"}[sc["formato"]])
+	if sc.has("turni_max"):
+		t.append("%d turni" % int(sc["turni_max"]))
+	if sc.has("anni"):
+		t.append("%d anni" % int(sc["anni"]))
+	return "  |  ".join(t)
+
+
+func _section(t: String, n := 0) -> void:
+	detail.add_child(UI.head(("%d. " % n if n > 0 else "") + t, 20, UI.YELLOW))
+
+
 func _refresh() -> void:
 	for c in list_box.get_children():
 		c.queue_free()
-	for s in D.SCENARIOS:
-		var id := int(s["id"])
-		var b := UI.button("%s   %s" % [s["anno"], s["nome"]], 530, 44, 18)
-		b.alignment = HORIZONTAL_ALIGNMENT_LEFT
-		if id == scen_id:
-			b.add_theme_stylebox_override("normal", UI.box(Color("#5a1d36"), UI.YELLOW, 2, 6))
-			b.add_theme_color_override("font_color", UI.YELLOW_L)
-		b.pressed.connect(func():
-			if scen_id != id:
-				scen_id = id
-				fmt = ""
-				who = []
-				_refresh())
-		list_box.add_child(b)
+	for gr in GROUPS:
+		var gl := UI.head(gr[0], 18, UI.PINK_L)
+		list_box.add_child(gl)
+		list_box.add_child(UI.wrap(UI.label(gr[1], 14, UI.MUTED), 540))
+		for id: int in gr[2]:
+			var s: Dictionary = D.scenario(id)
+			if s.is_empty():
+				continue
+			var b := Button.new()
+			b.custom_minimum_size = Vector2(540, 52)
+			b.focus_mode = Control.FOCUS_NONE
+			b.set_meta("sid", id)
+			var hb := HBoxContainer.new()
+			hb.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+			hb.offset_left = 12
+			hb.offset_right = -12
+			hb.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			hb.add_theme_constant_override("separation", 10)
+			b.add_child(hb)
+			var vb := VBoxContainer.new()
+			vb.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			vb.add_theme_constant_override("separation", -2)
+			vb.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+			hb.add_child(vb)
+			var sel := id == scen_id
+			var ln := UI.label(str(s["nome"]), 18, UI.YELLOW_L if sel else UI.TEXT)
+			ln.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			vb.add_child(ln)
+			var lt := UI.label("%s  |  %s" % [s["anno"], _tags(s)], 13, UI.MUTED)
+			lt.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			vb.add_child(lt)
+			if sel:
+				_sel_style(b)
+			b.pressed.connect(func():
+				if scen_id != id:
+					scen_id = id
+					fmt = ""
+					who = []
+					_refresh()
+					right_scroll.scroll_vertical = 0)
+			list_box.add_child(b)
+		var gap := Control.new()
+		gap.custom_minimum_size.y = 6
+		list_box.add_child(gap)
 	for c in detail.get_children():
+		c.queue_free()
+	for c in foot.get_children():
 		c.queue_free()
 	var sc: Dictionary = D.scenario(scen_id)
 	var lati: Array = sc["lati"]
@@ -129,6 +252,7 @@ func _refresh() -> void:
 			who.append(0 if i == 0 else 1)
 	while names.size() < lati.size():
 		names.append("")
+	# --- scheda dello scenario
 	var top := HBoxContainer.new()
 	top.add_theme_constant_override("separation", 22)
 	detail.add_child(top)
@@ -136,41 +260,26 @@ func _refresh() -> void:
 	cov.texture = UI.tex("res://assets/misc/copertina.webp")
 	cov.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	cov.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
-	cov.custom_minimum_size = Vector2(190, 250)
+	cov.custom_minimum_size = Vector2(140, 184)
 	top.add_child(cov)
 	var tv := VBoxContainer.new()
 	tv.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	tv.add_theme_constant_override("separation", 6)
 	top.add_child(tv)
-	tv.add_child(UI.title(sc["nome"], 40))
-	tv.add_child(UI.label("%s  |  %s" % [sc["anno"], sc["orig"]], 18, UI.MUTED))
-	tv.add_child(UI.wrap(UI.label(sc["intro"], 19), 800))
-	detail.add_child(UI.head("Vittoria", 18, UI.YELLOW))
+	tv.add_child(UI.title(sc["nome"], 38))
+	tv.add_child(UI.label("%s  |  %s  |  %s" % [sc["anno"], sc["orig"], _tags(sc)], 16, UI.MUTED))
+	tv.add_child(UI.wrap(UI.label(sc["intro"], 18), 760))
+	var vic := VBoxContainer.new()
+	vic.add_theme_constant_override("separation", 4)
+	detail.add_child(vic)
+	vic.add_child(UI.head("Come si vince", 18, UI.PINK_L))
 	for v in sc["vittoria"]:
-		detail.add_child(UI.wrap(UI.label("- " + v, 17), 1000))
+		vic.add_child(UI.wrap(UI.label("- " + v, 16), 1000))
 	if sc.get("note", "") != "":
-		detail.add_child(UI.wrap(UI.label(sc["note"], 17, UI.PINK_L), 1000))
+		vic.add_child(UI.wrap(UI.label(sc["note"], 16, UI.PINK_L), 1000))
 	detail.add_child(UI.hsep())
-	# formato
-	detail.add_child(UI.head("Formato", 18, UI.YELLOW))
-	fmt_box = HBoxContainer.new()
-	fmt_box.add_theme_constant_override("separation", 8)
-	detail.add_child(fmt_box)
-	for f in [["base", "Base"], ["modificato", "Base con randomizzatore"], ["avanzato", "Avanzato (Tactical Display)"]]:
-		var key: String = f[0]
-		var b := UI.button(f[1] + ("  (consigliato)" if key == sc["formato"] else ""), 0, 44, 17)
-		if key == fmt:
-			b.add_theme_stylebox_override("normal", UI.box(Color("#5a1d36"), UI.YELLOW, 2, 6))
-		if sc.has("formati") and not key in sc["formati"]:
-			b.disabled = true
-			b.tooltip_text = "Questo scenario si gioca solo nel formato indicato."
-		elif sc.has("xeno") and key == "avanzato":
-			b.tooltip_text = "Il regolamento consiglia il gioco base per gli Xenofobi; nel gioco avanzato la nova si innesca sul Tactical Display (31.52)."
-		b.pressed.connect(func():
-			fmt = key
-			_refresh())
-		fmt_box.add_child(b)
-	# giocatori
-	detail.add_child(UI.head("Giocatori", 18, UI.YELLOW))
+	# --- 2. giocatori
+	_section("Chi gioca", 2)
 	for i: int in lati.size():
 		var sd: Dictionary = lati[i]
 		var r := HBoxContainer.new()
@@ -182,18 +291,18 @@ func _refresh() -> void:
 		chip.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 		r.add_child(chip)
 		var l := UI.label(sd["nome"], 19)
-		l.custom_minimum_size.x = 260
+		l.custom_minimum_size.x = 300
 		r.add_child(l)
 		var k := i
 		if sd.get("neutrale", false) or (sc.get("solitario", false) and sc.has("solo_umano") and i != int(sc["solo_umano"])):
 			who[i] = 1
-			r.add_child(UI.label("si schiera durante la partita" if sd.get("neutrale", false) else "IA", 17, UI.MUTED))
+			r.add_child(UI.label("si schiera durante la partita" if sd.get("neutrale", false) else "computer", 17, UI.MUTED))
 			continue
-		for opt in [[0, "Persona"], [1, "IA"]]:
+		for opt in [[0, "Persona"], [1, "Computer"]]:
 			var v: int = opt[0]
-			var b := UI.button(opt[1], 120, 42, 17)
+			var b := UI.button(opt[1], 130, 42, 17)
 			if who[i] == v:
-				b.add_theme_stylebox_override("normal", UI.box(Color("#5a1d36"), UI.YELLOW, 2, 6))
+				_sel_style(b)
 			b.pressed.connect(func():
 				who[k] = v
 				_refresh())
@@ -210,10 +319,34 @@ func _refresh() -> void:
 		if w == 0:
 			hum += 1
 	if hum >= 2:
-		detail.add_child(UI.wrap(UI.label("Più persone sullo stesso dispositivo: i piani sono segreti, e prima di ogni scelta lo schermo chiede di passare il dispositivo.", 16, UI.MUTED), 1000))
-	# regole opzionali (32.0-36.0)
+		detail.add_child(UI.wrap(UI.label("Più persone sullo stesso dispositivo: i piani restano segreti, e prima di ogni scelta lo schermo chiede di passare il dispositivo. Per giocare ognuno dal suo, usa Gioca online.", 15, UI.MUTED), 1000))
+	elif hum == 0:
+		detail.add_child(UI.wrap(UI.label("Nessuna persona: guarderai il computer giocare contro se stesso.", 15, UI.MUTED), 1000))
+	# --- 3. formato
+	_section("Formato", 3)
+	fmt_box = HBoxContainer.new()
+	fmt_box.add_theme_constant_override("separation", 8)
+	detail.add_child(fmt_box)
+	for f in [["base", "Base"], ["modificato", "Base con randomizzatore"], ["avanzato", "Avanzato (Tactical Display)"]]:
+		var key: String = f[0]
+		var b := UI.button(f[1] + ("  (consigliato)" if key == sc["formato"] else ""), 0, 44, 17)
+		if key == fmt:
+			_sel_style(b)
+		if sc.has("formati") and not key in sc["formati"]:
+			b.disabled = true
+			b.tooltip_text = "Questo scenario si gioca solo nel formato indicato."
+		elif sc.has("xeno") and key == "avanzato":
+			b.tooltip_text = "Il regolamento consiglia il gioco base per gli Xenofobi; nel gioco avanzato la nova si innesca sul Tactical Display (31.52)."
+		b.pressed.connect(func():
+			fmt = key
+			_refresh())
+		fmt_box.add_child(b)
+	detail.add_child(UI.wrap(UI.label(FMT_DESC[fmt], 15, UI.MUTED), 1000))
+	# --- 4. regole opzionali (32.0-36.0)
+	var n_opt := 0
 	if not sc.get("solitario", false) and not sc.get("senza_opzioni", false):
-		detail.add_child(UI.head("Regole opzionali", 18, UI.YELLOW))
+		_section("Regole opzionali", 4)
+		detail.add_child(UI.wrap(UI.label("Facoltative: aggiungono dettaglio. Passa il mouse su una regola per leggere cosa fa.", 15, UI.MUTED), 1000))
 		var ro := HFlowContainer.new()
 		ro.add_theme_constant_override("h_separation", 8)
 		ro.add_theme_constant_override("v_separation", 6)
@@ -221,51 +354,76 @@ func _refresh() -> void:
 		var forced: Array = sc.get("opzioni", [])
 		for k in D.OPTIONS:
 			var key3: String = k
-			var cb := CheckBox.new()
-			cb.text = D.OPTIONS[k][0]
-			cb.tooltip_text = D.OPTIONS[k][1]
-			cb.add_theme_font_size_override("font_size", 16)
+			var on: bool = key3 in forced or bool(opz.get(key3, false))
+			var b := UI.button(("%s: sì" if on else "%s: no") % D.OPTIONS[k][0], 0, 40, 16)
+			b.tooltip_text = D.OPTIONS[k][1]
+			if on:
+				_sel_style(b)
+				n_opt += 1
 			if key3 in forced:
-				cb.button_pressed = true
-				cb.disabled = true
-				cb.tooltip_text += " (sempre attiva in questo scenario)"
+				b.disabled = true
+				b.tooltip_text += " (sempre attiva in questo scenario)"
 			else:
-				cb.button_pressed = bool(opz.get(key3, false))
-				cb.toggled.connect(func(v): opz[key3] = v)
-			ro.add_child(cb)
-	# grafica
-	detail.add_child(UI.head("Grafica e ritmo", 18, UI.YELLOW))
+				b.pressed.connect(func():
+					opz[key3] = not bool(opz.get(key3, false))
+					_refresh())
+			ro.add_child(b)
+	# --- aspetto
+	_section("Aspetto")
 	var rg := HBoxContainer.new()
 	rg.add_theme_constant_override("separation", 8)
 	detail.add_child(rg)
-	for g in [["reborn", "Reborn: astronavi 3D"], ["originale", "Originale: mappa e pedine SPI"]]:
+	rg.add_child(UI.label("Grafica", 16, UI.MUTED))
+	for g in [["reborn", "Astronavi 3D"], ["originale", "Mappa e pedine SPI"]]:
 		var key2: String = g[0]
-		var b := UI.button(g[1], 0, 44, 17)
+		var b := UI.button(g[1], 0, 40, 16)
 		if style == key2:
-			b.add_theme_stylebox_override("normal", UI.box(Color("#5a1d36"), UI.YELLOW, 2, 6))
+			_sel_style(b)
 		b.pressed.connect(func():
 			style = key2
 			_refresh())
 		rg.add_child(b)
-	for sp in [[1.0, "Animazioni normali"], [2.5, "Veloci"]]:
+	var gap := Control.new()
+	gap.custom_minimum_size.x = 20
+	rg.add_child(gap)
+	rg.add_child(UI.label("Animazioni", 16, UI.MUTED))
+	for sp in [[1.0, "Normali"], [2.5, "Veloci"]]:
 		var v2: float = sp[0]
-		var b := UI.button(sp[1], 0, 44, 17)
+		var b := UI.button(sp[1], 0, 40, 16)
 		if is_equal_approx(speed, v2):
-			b.add_theme_stylebox_override("normal", UI.box(Color("#5a1d36"), UI.YELLOW, 2, 6))
+			_sel_style(b)
 		b.pressed.connect(func():
 			speed = v2
 			_refresh())
 		rg.add_child(b)
-	detail.add_child(UI.hsep())
+	# --- piede: riepilogo e avvio
+	var sum := []
+	var people := []
+	var comps := 0
+	for i in lati.size():
+		if who[i] == 0:
+			people.append(str(lati[i]["nome"]))
+		else:
+			comps += 1
+	if people.is_empty():
+		sum.append("solo computer")
+	else:
+		sum.append("tu: " + ", ".join(people) + (" contro il computer" if comps > 0 else ""))
+	sum.append({"base": "gioco base", "modificato": "base con randomizzatore", "avanzato": "gioco avanzato"}[fmt])
+	if n_opt > 0:
+		sum.append("%d regol%s opzional%s" % [n_opt, "a" if n_opt == 1 else "e", "e" if n_opt == 1 else "i"])
+	foot.add_child(UI.wrap(UI.label("%s  |  %s" % [sc["nome"], ", ".join(sum)], 16, UI.PINK_L), 1000))
 	var rb := HBoxContainer.new()
 	rb.add_theme_constant_override("separation", 14)
-	detail.add_child(rb)
-	var bp := UI.primary(UI.button("Gioca", 260, 64, 26))
+	foot.add_child(rb)
+	var bp := UI.primary(UI.button("Gioca", 260, 60, 26))
+	bp.tooltip_text = "Tutti sullo stesso dispositivo (con il computer per i lati non umani)"
 	bp.pressed.connect(_on_start)
 	rb.add_child(bp)
 	if not sc.get("solitario", false):
-		var bo := UI.button("Gioca online", 240, 64, 22)
-		bo.pressed.connect(_online_panel)
+		var bo := UI.button("Crea una partita online", 0, 60, 20)
+		bo.tooltip_text = "Ognuno dal suo dispositivo: ricevi un codice da mandare agli altri"
+		bo.pressed.connect(_online_create_panel)
 		rb.add_child(bo)
 
 
@@ -390,21 +548,38 @@ func _line(ph: String, maxlen: int) -> LineEdit:
 
 # ================================================================ online
 
+var on_join := false
+
+
+func _online_join_panel() -> void:
+	on_join = true
+	_online_panel()
+
+
+func _online_create_panel() -> void:
+	on_join = false
+	_online_panel()
+
+
 func _online_panel() -> void:
 	_store()
 	if is_instance_valid(on_panel):
 		on_panel.queue_free()
 	on_panel = _overlay()
 	var vb: VBoxContainer = on_panel.get_meta("vb")
-	vb.add_child(UI.title("Gioca online", 48))
+	vb.add_child(UI.title("Entra in una partita online" if on_join else "Crea una partita online", 44))
 	var sc: Dictionary = D.scenario(scen_id)
-	vb.add_child(UI.wrap(UI.label("Chi crea la stanza sceglie qui il suo lato; gli amici entrano con il codice. Scenario, formato e grafica scelti nel menu valgono per tutti (la grafica ognuno può cambiarla durante la partita). I posti rimasti liberi li gioca l'IA.", 19, UI.MUTED), 800))
+	if on_join:
+		vb.add_child(UI.wrap(UI.label("Scrivi il tuo nome e il codice di quattro lettere che ti ha mandato chi ha creato la stanza. Scenario e regole li ha già scelti lui.", 19, UI.MUTED), 800))
+	else:
+		vb.add_child(UI.wrap(UI.label("Scenario: %s, %s. Scegli il tuo lato e crea la stanza: riceverai un codice da mandare agli amici. Scenario, formato e regole scelti nel menu valgono per tutti; i posti rimasti liberi li gioca il computer." % [sc["nome"], {"base": "gioco base", "modificato": "base con randomizzatore", "avanzato": "gioco avanzato"}[fmt]], 19, UI.MUTED), 800))
 	var ses: Dictionary = main.get_net().load_session()
 	on_name = _line("Il tuo nome", 20)
 	on_name.text = str(ses.get("name", ""))
 	vb.add_child(on_name)
 	var r0 := HBoxContainer.new()
 	r0.add_theme_constant_override("separation", 8)
+	r0.visible = not on_join
 	vb.add_child(r0)
 	r0.add_child(UI.label("Tu giochi:", 19))
 	for i in sc["lati"].size():
@@ -418,6 +593,7 @@ func _online_panel() -> void:
 		r0.add_child(b)
 	var b_create := UI.primary(UI.button("Crea una stanza", 0, 56, 22))
 	b_create.pressed.connect(_online_create)
+	b_create.visible = not on_join
 	vb.add_child(b_create)
 	var row := HBoxContainer.new()
 	row.add_theme_constant_override("separation", 12)
@@ -430,6 +606,7 @@ func _online_panel() -> void:
 	var b_join := UI.button("Entra", 200, 56, 22)
 	b_join.pressed.connect(_online_join)
 	row.add_child(b_join)
+	row.visible = on_join
 	vb.add_child(row)
 	on_lbl = UI.wrap(UI.label("", 20, Color.WHITE), 780)
 	on_lbl.custom_minimum_size.y = 100

@@ -560,7 +560,7 @@ func snapshot() -> Dictionary:
 func _rec(seg: Dictionary) -> void:
 	seg["u"] = snapshot()
 	seg["turn"] = turn
-	seg["ph"] = phase
+	seg["phase"] = phase
 	seg["nova"] = destroyed_stars.keys()
 	history.append(seg)
 	fx.emit(seg["k"], seg)

@@ -162,6 +162,7 @@ Da **Beyond 3000** (Moves): compare **Wandering's End** (2223/+8), il sistema na
 - **Piano**: clic su una tua flotta (o sull'elenco a destra), poi clic su un esagono o su una stella per la destinazione. La quota Zulu si cambia con i pulsanti o con i tasti W e S. La sfera azzurra è la portata sicura; le linee dei piani sono verdi (sicuro), gialle, arancioni o rosse secondo il rischio.
 - **Piano dell'IA**: riempie il piano con i suggerimenti dell'avversario automatico, che puoi poi modificare.
 - **Grafica**: Reborn (astronavi e StarGate in 3D, effetti di luce) oppure originale (la mappa e le pedine SPI).
+- **Tabelle**: il pulsante in alto apre tutte le tabelle del gioco (spostamenti e oltre-spostamento, combattimento base, Tactical Display, Outleap). Le tabelle che servono compaiono anche da sole: la probabilità di arrivare quando un salto è oltre la portata, la tabella dei risultati nel combattimento, le unità colpite e la tabella delle proiezioni quando ne prepari una.
 - **Salva**: salva la partita su Firebase e ti dà un codice da usare nel menu, anche su un altro dispositivo.
 - **Online**: chi crea la stanza dà il codice agli amici; le decisioni sono segrete e simultanee, e se qualcuno si disconnette per un po' gioca l'IA al suo posto.
-- Alla fine si può **rivedere la partita** dall'inizio, con tutte le posizioni scoperte.
+- Alla fine si può **rivedere la partita** dall'inizio, con tutte le posizioni scoperte, comprese le battaglie sul Tactical Display (schieramento, Tac-spostamenti, proiezioni e risultati, fase per fase). I pulsanti **Battaglia precedente** e **Battaglia successiva** saltano da uno scontro all'altro.
