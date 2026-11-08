@@ -13,6 +13,14 @@ const MODELS := "res://assets/models/%s.glb"
 
 static var _cache := {}
 
+## correzioni per i modelli che non sono già orientati e scalati come il gioco si aspetta:
+## rotazione (radianti) e scala che portano la nave lunga circa 1 con la prua verso -Z,
+## e la StarGate con l'anello di raggio circa 1 sul piano XZ
+const FIX := {
+	"nave_umani": {"rot": Vector3(-PI / 2, 0, 0), "scale": 0.53, "accent": Vector3(0, 0, 0.45)},
+	"porta": {"rot": Vector3.ZERO, "scale": 1.2, "ring": 1.15},
+}
+
 
 static func _mat(col: Color, metal := 0.6, rough := 0.35, emit := 0.0) -> StandardMaterial3D:
 	var m := StandardMaterial3D.new()
@@ -45,7 +53,16 @@ static func _glb(name: String) -> Node3D:
 	var ps: PackedScene = _cache[p]
 	if ps == null:
 		return null
-	return ps.instantiate()
+	var inst: Node3D = ps.instantiate()
+	if not FIX.has(name):
+		return inst
+	var fx: Dictionary = FIX[name]
+	var w := Node3D.new()
+	inst.rotation = fx["rot"]
+	inst.scale = Vector3.ONE * float(fx["scale"])
+	w.add_child(inst)
+	w.set_meta("fix", name)
+	return w
 
 
 ## una TeleNave della razza indicata, lunga circa 1 unità, con la prua verso -Z
@@ -211,8 +228,33 @@ static func gate_model(race: String, col: Color) -> Node3D:
 	return n
 
 
+## i modelli senza materiale "colore_lato" ricevono un anello luminoso del colore del lato
+static func _accent(w: Node3D, col: Color) -> void:
+	if not w.has_meta("fix"):
+		return
+	var fx: Dictionary = FIX[str(w.get_meta("fix"))]
+	var m := _mat(col, 0.2, 0.4, 1.6)
+	if fx.has("ring"):
+		var r: float = fx["ring"]
+		var t := TorusMesh.new()
+		t.inner_radius = r
+		t.outer_radius = r + 0.035
+		t.rings = 64
+		t.ring_segments = 8
+		w.add_child(_mesh(t, m))
+	if fx.has("accent"):
+		var t2 := TorusMesh.new()
+		t2.inner_radius = 0.07
+		t2.outer_radius = 0.11
+		t2.rings = 24
+		t2.ring_segments = 6
+		w.add_child(_mesh(t2, m, fx["accent"], Vector3(PI / 2, 0, 0)))
+
+
 static func _tint(n: Node, col: Color) -> void:
 	# i modelli .glb hanno un materiale "colore_lato" che prende il colore della fazione
+	if n is Node3D and n.has_meta("fix"):
+		_accent(n, col)
 	for c in n.get_children():
 		_tint(c, col)
 	if n is MeshInstance3D:

@@ -219,6 +219,9 @@ func _process(dt: float) -> void:
 			var tn := tac_units.get_node_or_null(id)
 			if tn != null:
 				tn.position = tn.position.lerp(tac_pos[id], minf(1.0, dt * 5.0))
+				var pg := tn.find_child("porta", true, false)
+				if pg != null:
+					pg.rotation.y += dt * 0.35
 	if is_instance_valid(hint):
 		var r: Node3D = hint.get_node("anello")
 		var k := 1.0 + 0.25 * sin(_t * 5.0)
@@ -1522,7 +1525,8 @@ func _tac_node(u: Dictionary, known: bool, mode: String, dis: bool, neut: bool, 
 		var model: Node3D
 		if u["kind"] == "gate":
 			model = Ships.gate_model(u["race"], col)
-			model.scale = Vector3.ONE * 1.5
+			model.scale = Vector3.ONE * 1.9
+			model.name = "porta"
 		else:
 			model = Ships.fleet(u["race"], col, 1, mode == "battle")
 			model.scale = Vector3.ONE * 2.4
