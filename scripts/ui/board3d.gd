@@ -809,6 +809,10 @@ func _refresh_units(snap) -> void:
 			unit_nodes.erase(id)
 			unit_pos.erase(id)
 	var hidden_done := {}
+	var gate_lz := {}
+	for gid in where:
+		if eng.units.has(gid) and eng.units[gid]["kind"] == "gate":
+			gate_lz[where[gid]] = true
 	for key in stacks:
 		var ids: Array = stacks[key]
 		var k := 0
@@ -849,6 +853,9 @@ func _refresh_units(snap) -> void:
 				else:
 					off = Vector3(0, 0.25, 0)
 				k += 1
+				# sopra la StarGate: il mozzo la nasconderebbe
+				if vis == "full" and gate_lz.has(l):
+					off.y += 1.15
 			unit_pos[id] = base + off
 			var sel = n.get_node_or_null("sel")
 			if sel != null:
@@ -914,7 +921,12 @@ func _stack_tags(stacks: Dictionary, seen: Dictionary, where: Dictionary) -> voi
 				if not top_view:
 					continue
 				txt = zs
-			_tag(root, txt, Hex.world(l), _side_col(sd), 22 if has_gate else 30, (66 if has_gate else 62) + 44 * j)
+			var tp := Hex.world(l)
+			for gid in where:
+				if where[gid] == l and eng.units.has(gid) and eng.units[gid]["kind"] == "gate" and style != "originale":
+					tp.y += 1.15
+					break
+			_tag(root, txt, tp, _side_col(sd), 22 if has_gate else 30, (66 if has_gate else 62) + 44 * j)
 			j += 1
 
 
